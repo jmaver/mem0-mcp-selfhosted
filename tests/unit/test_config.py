@@ -644,6 +644,26 @@ class TestBuildConfig:
         _, _, split_config = self._build_with_env(env)
         assert split_config["contradiction_ollama_base_url"] == "http://192.168.0.208:11434"
 
+    # --- Whitespace stripping (13.8.x) ---
+
+    def test_url_whitespace_stripped(self):
+        """Trailing whitespace in URL env vars is stripped."""
+        env = {"MEM0_LLM_PROVIDER": "ollama", "MEM0_LLM_URL": "  http://gpu:11434\n"}
+        config_dict, *_ = self._build_with_env(env)
+        assert config_dict["llm"]["config"]["ollama_base_url"] == "http://gpu:11434"
+
+    def test_ollama_url_fallback_whitespace_stripped(self):
+        """MEM0_OLLAMA_URL whitespace is stripped in fallback."""
+        env = {"MEM0_LLM_PROVIDER": "ollama", "MEM0_OLLAMA_URL": " http://gpu:11434 "}
+        config_dict, *_ = self._build_with_env(env)
+        assert config_dict["llm"]["config"]["ollama_base_url"] == "http://gpu:11434"
+
+    def test_provider_whitespace_stripped(self):
+        """Trailing whitespace in provider env vars is stripped."""
+        env = {"MEM0_PROVIDER": "  ollama\n"}
+        config_dict, *_ = self._build_with_env(env)
+        assert config_dict["llm"]["provider"] == "ollama"
+
     # --- End-to-end cascade (14.x) ---
 
     def test_two_env_vars_configure_full_ollama_stack(self):

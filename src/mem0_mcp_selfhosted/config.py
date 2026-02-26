@@ -47,7 +47,7 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo], dict[str, Any] |
     token = resolve_token()
 
     # --- Top-level provider default (cascades to LLM and graph LLM) ---
-    _provider_default = os.environ.get("MEM0_PROVIDER", "anthropic")
+    _provider_default = os.environ.get("MEM0_PROVIDER", "anthropic").strip()
     _supported_llm_providers = ("anthropic", "ollama")
     if _provider_default not in _supported_llm_providers:
         raise ValueError(
@@ -56,7 +56,7 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo], dict[str, Any] |
         )
 
     # --- LLM ---
-    llm_provider = os.environ.get("MEM0_LLM_PROVIDER", _provider_default)
+    llm_provider = os.environ.get("MEM0_LLM_PROVIDER", _provider_default).strip()
     if llm_provider not in _supported_llm_providers:
         raise ValueError(
             f"Unsupported MEM0_LLM_PROVIDER={llm_provider!r}. "

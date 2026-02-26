@@ -664,6 +664,12 @@ class TestBuildConfig:
         config_dict, *_ = self._build_with_env(env)
         assert config_dict["llm"]["provider"] == "ollama"
 
+    def test_llm_provider_whitespace_stripped(self):
+        """Trailing whitespace in MEM0_LLM_PROVIDER is stripped."""
+        env = {"MEM0_LLM_PROVIDER": " ollama \n"}
+        config_dict, *_ = self._build_with_env(env)
+        assert config_dict["llm"]["provider"] == "ollama"
+
     # --- End-to-end cascade (14.x) ---
 
     def test_two_env_vars_configure_full_ollama_stack(self):

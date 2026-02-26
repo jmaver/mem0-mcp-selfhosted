@@ -19,8 +19,13 @@ class ProviderInfo(TypedDict):
     class_path: str
 
 
+def _env(key: str, default: str = "") -> str:
+    """Read an env var, stripping whitespace (guards against .env trailing newlines)."""
+    return os.environ.get(key, default).strip()
+
+
 def _bool_env(key: str, default: str = "false") -> bool:
-    return os.environ.get(key, default).lower() in ("true", "1", "yes")
+    return _env(key, default).lower() in ("true", "1", "yes")
 
 
 def _resolve_ollama_url(*env_keys: str) -> str:
@@ -30,10 +35,10 @@ def _resolve_ollama_url(*env_keys: str) -> str:
     ``MEM0_OLLAMA_URL``, then ``"http://localhost:11434"``.
     """
     for key in env_keys:
-        val = os.environ.get(key, "").strip()
+        val = _env(key)
         if val:
             return val
-    return os.environ.get("MEM0_OLLAMA_URL", "").strip() or "http://localhost:11434"
+    return _env("MEM0_OLLAMA_URL") or "http://localhost:11434"
 
 
 def build_config() -> tuple[dict[str, Any], list[ProviderInfo], dict[str, Any] | None]:
@@ -47,7 +52,7 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo], dict[str, Any] |
     token = resolve_token()
 
     # --- Top-level provider default (cascades to LLM and graph LLM) ---
-    _provider_default = os.environ.get("MEM0_PROVIDER", "anthropic").strip()
+    _provider_default = _env("MEM0_PROVIDER", "anthropic")
     _supported_llm_providers = ("anthropic", "ollama")
     if _provider_default not in _supported_llm_providers:
         raise ValueError(
@@ -56,7 +61,7 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo], dict[str, Any] |
         )
 
     # --- LLM ---
-    llm_provider = os.environ.get("MEM0_LLM_PROVIDER", _provider_default).strip()
+    llm_provider = _env("MEM0_LLM_PROVIDER", _provider_default)
     if llm_provider not in _supported_llm_providers:
         raise ValueError(
             f"Unsupported MEM0_LLM_PROVIDER={llm_provider!r}. "
@@ -64,8 +69,8 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo], dict[str, Any] |
         )
 
     _llm_model_defaults = {"anthropic": "claude-opus-4-6", "ollama": "qwen3:14b"}
-    llm_model = os.environ.get("MEM0_LLM_MODEL", _llm_model_defaults[llm_provider])
-    llm_max_tokens = int(os.environ.get("MEM0_LLM_MAX_TOKENS", "16384"))
+    llm_model = _env("MEM0_LLM_MODEL", _llm_model_defaults[llm_provider])
+    llm_max_tokens = int(_env("MEM0_LLM_MAX_TOKENS", "16384"))
 
     llm_config: dict[str, Any] = {"model": llm_model}
     if llm_provider == "anthropic":
@@ -76,10 +81,10 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo], dict[str, Any] |
         llm_config["ollama_base_url"] = _resolve_ollama_url("MEM0_LLM_URL")
 
     # --- Embedder ---
-    embed_provider = os.environ.get("MEM0_EMBED_PROVIDER", "ollama")
-    embed_model = os.environ.get("MEM0_EMBED_MODEL", "bge-m3")
+    embed_provider = _env("MEM0_EMBED_PROVIDER", "ollama")
+    embed_model = _env("MEM0_EMBED_MODEL", "bge-m3")
     embed_url = _resolve_ollama_url("MEM0_EMBED_URL")
-    embed_dims = int(os.environ.get("MEM0_EMBED_DIMS", "1024"))
+    embed_dims = int(_env("MEM0_EMBED_DIMS", "1024"))
 
     embedder_config: dict[str, Any] = {
         "model": embed_model,
@@ -88,8 +93,8 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo], dict[str, Any] |
         embedder_config["ollama_base_url"] = embed_url
 
     # --- Vector Store ---
-    qdrant_url = os.environ.get("MEM0_QDRANT_URL", "http://localhost:6333")
-    collection = os.environ.get("MEM0_COLLECTION", "mem0_mcp_selfhosted")
+    qdrant_url = _env("MEM0_QDRANT_URL", "http://localhost:6333")
+    collection = _env("MEM0_COLLECTION", "mem0_mcp_selfhosted")
     qdrant_api_key = os.environ.get("MEM0_QDRANT_API_KEY")
     qdrant_on_disk = _bool_env("MEM0_QDRANT_ON_DISK")
 
@@ -144,12 +149,12 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo], dict[str, Any] |
     enable_graph = _bool_env("MEM0_ENABLE_GRAPH")
     graph_llm_provider_raw: str | None = None  # set inside block, used for provider registration
     if enable_graph:
-        neo4j_url = os.environ.get("MEM0_NEO4J_URL", "bolt://127.0.0.1:7687")
-        neo4j_user = os.environ.get("MEM0_NEO4J_USER", "neo4j")
-        neo4j_password = os.environ.get("MEM0_NEO4J_PASSWORD", "mem0graph")
+        neo4j_url = _env("MEM0_NEO4J_URL", "bolt://127.0.0.1:7687")
+        neo4j_user = _env("MEM0_NEO4J_USER", "neo4j")
+        neo4j_password = _env("MEM0_NEO4J_PASSWORD", "mem0graph")
         neo4j_database = os.environ.get("MEM0_NEO4J_DATABASE")
         neo4j_base_label = os.environ.get("MEM0_NEO4J_BASE_LABEL")
-        graph_threshold = float(os.environ.get("MEM0_GRAPH_THRESHOLD", "0.7"))
+        graph_threshold = float(_env("MEM0_GRAPH_THRESHOLD", "0.7"))
 
         graph_neo4j_config: dict[str, Any] = {
             "url": neo4j_url,
@@ -162,9 +167,9 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo], dict[str, Any] |
             graph_neo4j_config["base_label"] = neo4j_base_label
 
         # Graph LLM — MUST be explicit (mem0ai defaults to "openai" if omitted)
-        graph_llm_provider_raw = os.environ.get("MEM0_GRAPH_LLM_PROVIDER", _provider_default)
+        graph_llm_provider_raw = _env("MEM0_GRAPH_LLM_PROVIDER", _provider_default)
         graph_llm_provider = graph_llm_provider_raw
-        graph_llm_model = os.environ.get("MEM0_GRAPH_LLM_MODEL", llm_model)
+        graph_llm_model = _env("MEM0_GRAPH_LLM_MODEL", llm_model)
 
         graph_llm_config: dict[str, Any] = {
             "model": graph_llm_model,
@@ -181,7 +186,7 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo], dict[str, Any] |
         elif graph_llm_provider == "gemini":
             # Use mem0ai's built-in GeminiLLM provider
             # Default to flash-lite (not the main Claude model) when no explicit model set
-            graph_llm_config["model"] = os.environ.get(
+            graph_llm_config["model"] = _env(
                 "MEM0_GRAPH_LLM_MODEL", "gemini-2.5-flash-lite"
             )
             google_api_key = os.environ.get("GOOGLE_API_KEY")
@@ -191,7 +196,7 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo], dict[str, Any] |
             # Split-model router: Gemini for extraction, separate LLM for contradiction.
             # Use "gemini" as config provider (passes pydantic validation), then
             # server.py swaps the graph LLM to the SplitModelGraphLLM after creation.
-            graph_llm_config["model"] = os.environ.get(
+            graph_llm_config["model"] = _env(
                 "MEM0_GRAPH_LLM_MODEL", "gemini-2.5-flash-lite"
             )
             google_api_key = os.environ.get("GOOGLE_API_KEY")
@@ -221,7 +226,7 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo], dict[str, Any] |
         },
     ]
     # Register Anthropic when used as main LLM, graph LLM, or contradiction LLM
-    contradiction_provider = os.environ.get(
+    contradiction_provider = _env(
         "MEM0_GRAPH_CONTRADICTION_LLM_PROVIDER", "anthropic"
     )
     _needs_anthropic = (
@@ -240,9 +245,9 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo], dict[str, Any] |
     # for server.py to swap the graph LLM after Memory creation.
     split_config: dict[str, Any] | None = None
     if enable_graph and graph_llm_provider_raw == "gemini_split":
-        extraction_model = os.environ.get("MEM0_GRAPH_LLM_MODEL", "gemini-2.5-flash-lite")
+        extraction_model = _env("MEM0_GRAPH_LLM_MODEL", "gemini-2.5-flash-lite")
         google_api_key = os.environ.get("GOOGLE_API_KEY")
-        contradiction_provider = os.environ.get(
+        contradiction_provider = _env(
             "MEM0_GRAPH_CONTRADICTION_LLM_PROVIDER", "anthropic"
         )
         # Provider-aware default: when contradiction provider is anthropic,
@@ -251,7 +256,7 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo], dict[str, Any] |
             "anthropic": "claude-opus-4-6",
             "anthropic_oat": "claude-opus-4-6",
         }
-        contradiction_model = os.environ.get(
+        contradiction_model = _env(
             "MEM0_GRAPH_CONTRADICTION_LLM_MODEL",
             _contradiction_model_defaults.get(contradiction_provider, llm_model),
         )

@@ -67,6 +67,42 @@ class TestBuildConfig:
         config_dict, *_ = self._build_with_env(env)
         assert "graph_store" not in config_dict
 
+    def test_neo4j_database_uses_env_var(self):
+        """MEM0_NEO4J_DATABASE sets NEO4J_DATABASE env var, not config dict.
+
+        mem0ai's graph_memory.py passes config as positional args to
+        Neo4jGraph(url, username, password, ...) where pos 3 is `token`,
+        not `database`. Putting database in the config dict causes AuthError.
+        """
+        test_env = {"MEM0_ENABLE_GRAPH": "true", "MEM0_NEO4J_DATABASE": "mydb"}
+        leak_keys = [k for k in os.environ if k.startswith("MEM0_")]
+        with patch.dict("os.environ", test_env, clear=False) as patched_env:
+            for k in leak_keys:
+                if k not in test_env:
+                    patched_env.pop(k, None)
+            with patch("mem0_mcp_selfhosted.config.resolve_token", return_value="sk-test"):
+                from mem0_mcp_selfhosted.config import build_config
+                config_dict, *_ = build_config()
+
+                # database must NOT be in the config dict (would land in token param)
+                assert "database" not in config_dict["graph_store"]["config"]
+                # instead, NEO4J_DATABASE env var must be set for langchain_neo4j
+                assert os.environ.get("NEO4J_DATABASE") == "mydb"
+
+    def test_neo4j_database_not_set_when_absent(self):
+        """NEO4J_DATABASE env var not set when MEM0_NEO4J_DATABASE is absent."""
+        test_env = {"MEM0_ENABLE_GRAPH": "true"}
+        leak_keys = [k for k in os.environ if k.startswith("MEM0_")]
+        with patch.dict("os.environ", test_env, clear=False) as patched_env:
+            for k in leak_keys:
+                if k not in test_env:
+                    patched_env.pop(k, None)
+            patched_env.pop("NEO4J_DATABASE", None)
+            with patch("mem0_mcp_selfhosted.config.resolve_token", return_value="sk-test"):
+                from mem0_mcp_selfhosted.config import build_config
+                build_config()
+                assert "NEO4J_DATABASE" not in os.environ
+
     def test_explicit_embedder_provider(self):
         """Embedder provider is always explicit (never default to openai)."""
         config_dict, *_ = self._build_with_env({})

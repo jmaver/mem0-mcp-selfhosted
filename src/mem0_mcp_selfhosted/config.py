@@ -6,6 +6,7 @@ mem0ai MemoryConfig dict, and returns provider registration info.
 
 from __future__ import annotations
 
+import os
 from typing import Any, TypedDict
 
 from mem0_mcp_selfhosted.auth import resolve_token
@@ -153,7 +154,15 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo], dict[str, Any] |
             "password": neo4j_password,
         }
         if neo4j_database:
-            graph_neo4j_config["database"] = neo4j_database
+            # WORKAROUND: mem0ai's graph_memory.py passes config values as
+            # positional args to Neo4jGraph(url, username, password, ...) where
+            # the 4th param is `token`, NOT `database`. Putting database in the
+            # config dict causes it to land in token → AuthError.
+            # Set NEO4J_DATABASE env var instead — langchain_neo4j reads it via
+            # get_from_dict_or_env(). Upstream: mem0ai #3906, #3981, #4085.
+            # NOTE: Intentional process-global mutation — Neo4jGraph reads this
+            # env var at init time, which happens after build_config() returns.
+            os.environ["NEO4J_DATABASE"] = neo4j_database
         if neo4j_base_label:
             graph_neo4j_config["base_label"] = neo4j_base_label
 

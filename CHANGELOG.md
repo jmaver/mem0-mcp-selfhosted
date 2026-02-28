@@ -1,6 +1,27 @@
 # CHANGELOG
 
 
+## v0.2.1 (2026-02-28)
+
+### Bug Fixes
+
+- Update hooks to nested format for Claude Code schema compatibility
+  ([`2f86dee`](https://github.com/elvismdev/mem0-mcp-selfhosted/commit/2f86dee99c3fa73220270b721c1621881beea655))
+
+Migrate hook installer from the deprecated flat format to the current nested schema (matcher group
+  -> hooks array -> handler objects). Add legacy format detection and auto-migration so existing
+  users upgrading do not end up with duplicate or broken entries.
+
+### Documentation
+
+- Clarify hooks and CLAUDE.md as complementary layers
+  ([`94f29dc`](https://github.com/elvismdev/mem0-mcp-selfhosted/commit/94f29dca52582ee18ce9ae256fc06d8cf1adab30))
+
+Update README to explain that hooks (automated memory at session boundaries) and CLAUDE.md
+  (behavioral instructions for mid-session engagement) work best together rather than as
+  alternatives.
+
+
 ## v0.2.0 (2026-02-28)
 
 ### Features

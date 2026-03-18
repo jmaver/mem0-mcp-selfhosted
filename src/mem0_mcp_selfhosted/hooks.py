@@ -38,7 +38,7 @@ _MAX_MEMORIES = 20
 _MIN_USER_LEN = 20
 _MIN_ASSISTANT_LEN = 50
 _MAX_CONTENT_LEN = 4000
-_RECENT_WINDOW = 6  # last ~3 exchanges (user+assistant pairs)
+_RECENT_WINDOW = 20  # last ~10 exchanges (user+assistant pairs)
 
 
 def _get_user_id() -> str:
@@ -74,6 +74,21 @@ def _get_memory():
 
     _memory = Memory.from_config(config_dict)
     return _memory
+
+
+_HOOK_LOG = Path(tempfile.gettempdir()) / "mem0-hook-context.log"
+
+
+def _log_hook_event(hook: str, msg: str) -> None:
+    """Append a timestamped line to the hook log file (best-effort)."""
+    import datetime
+
+    try:
+        with open(_HOOK_LOG, "a", encoding="utf-8") as f:
+            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            f.write(f"{ts} [{hook}] {msg}\n")
+    except OSError:
+        pass
 
 
 def _output(data: dict) -> None:
@@ -139,6 +154,7 @@ def context_main() -> None:
         all_memories = all_memories[:_MAX_MEMORIES]
 
         if not all_memories:
+            _log_hook_event("context", f"no memories found for project '{project_name}'")
             _output(_nonfatal())
             return
 
@@ -148,12 +164,14 @@ def context_main() -> None:
             text = m.get("memory", m.get("text", ""))
             lines.append(f"{i}. {text}")
 
+        _log_hook_event("context", f"injected {len(all_memories)} memories for project '{project_name}'")
         response = _nonfatal()
         response["additionalContext"] = "\n".join(lines)
         _output(response)
 
-    except Exception:
+    except Exception as exc:
         logger.debug("context_main failed", exc_info=True)
+        _log_hook_event("context", f"FAILED: {exc}")
         _output(_nonfatal())
 
 
@@ -270,10 +288,12 @@ def stop_main() -> None:
             },
         )
 
+        _log_hook_event("stop", f"saved session for project '{project_name}'")
         _output(_nonfatal())
 
-    except Exception:
+    except Exception as exc:
         logger.debug("stop_main failed", exc_info=True)
+        _log_hook_event("stop", f"FAILED: {exc}")
         _output(_nonfatal())
 
 

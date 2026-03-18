@@ -292,7 +292,7 @@ class TestReadRecentMessages:
         ]
         p.write_text("\n".join(lines))
         result = hooks._read_recent_messages(str(p))
-        # 4 messages fits within _RECENT_WINDOW (6), so all are returned
+        # 4 messages fits within _RECENT_WINDOW, so all are returned
         assert len(result) == 4
         assert result[-1] == ("assistant", "second assistant msg")
         assert result[-2] == ("user", "second user msg")
@@ -300,16 +300,18 @@ class TestReadRecentMessages:
     def test_window_truncates_old_messages(self, tmp_path):
         """Transcripts longer than _RECENT_WINDOW are truncated to recent end."""
         p = tmp_path / "transcript.jsonl"
+        total = hooks._RECENT_WINDOW + 10  # always more than the window
         lines = []
-        for i in range(10):
+        for i in range(total):
             role = "user" if i % 2 == 0 else "assistant"
             lines.append(json.dumps({"role": role, "content": f"msg {i}"}))
         p.write_text("\n".join(lines))
         result = hooks._read_recent_messages(str(p))
         assert len(result) == hooks._RECENT_WINDOW
-        # Should contain messages 4-9 (the last 6)
-        assert result[0] == ("user", "msg 4")
-        assert result[-1] == ("assistant", "msg 9")
+        # Should contain only the last _RECENT_WINDOW messages
+        first_kept = total - hooks._RECENT_WINDOW
+        assert result[0][1] == f"msg {first_kept}"
+        assert result[-1][1] == f"msg {total - 1}"
 
     def test_skips_non_user_assistant_roles(self, tmp_path):
         """tool_use, tool_result, system roles are excluded from the window."""

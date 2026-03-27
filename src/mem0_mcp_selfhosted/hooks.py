@@ -165,8 +165,12 @@ def context_main() -> None:
             lines.append(f"{i}. {text}")
 
         _log_hook_event("context", f"injected {len(all_memories)} memories for project '{project_name}'")
+        context_text = "\n".join(lines)
         response = _nonfatal()
-        response["additionalContext"] = "\n".join(lines)
+        response["hookSpecificOutput"] = {
+            "hookEventName": "SessionStart",
+            "additionalContext": context_text,
+        }
         _output(response)
 
     except Exception as exc:

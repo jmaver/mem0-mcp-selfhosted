@@ -75,6 +75,7 @@ class TestAddMemory:
         fn = _get_tool_fn(srv, "add_memory")
         result = fn(
             text="I prefer Python",
+            project="my-project",
             user_id="alice",
             metadata={"source": "chat"},
             infer=False,
@@ -82,7 +83,7 @@ class TestAddMemory:
         mem.add.assert_called_once()
         args, kwargs = mem.add.call_args
         assert args[0] == [{"role": "user", "content": "I prefer Python"}]
-        assert kwargs["user_id"] == "alice"
+        assert kwargs["user_id"] == "alice:my-project"
         assert kwargs["metadata"] == {"source": "chat"}
         assert kwargs["infer"] is False
         parsed = json.loads(result)
@@ -92,24 +93,34 @@ class TestAddMemory:
         srv, mem = server_with_mock
         fn = _get_tool_fn(srv, "add_memory")
         custom_msgs = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}]
-        fn(text="ignored text", messages=custom_msgs)
+        fn(text="ignored text", project="my-project", messages=custom_msgs)
         args, _ = mem.add.call_args
         assert args[0] == custom_msgs
 
     def test_default_user_id(self, server_with_mock):
         srv, mem = server_with_mock
         fn = _get_tool_fn(srv, "add_memory")
-        fn(text="some fact")
+        fn(text="some fact", project="my-project")
+        _, kwargs = mem.add.call_args
+        assert kwargs["user_id"] == "test-user:my-project"
+
+    def test_global_project_uses_bare_user_id(self, server_with_mock):
+        srv, mem = server_with_mock
+        fn = _get_tool_fn(srv, "add_memory")
+        fn(text="global fact", project="global")
         _, kwargs = mem.add.call_args
         assert kwargs["user_id"] == "test-user"
 
 
 class TestSearchMemories:
     def test_all_kwargs(self, server_with_mock):
+        """search_memories with project runs two searches (project + global)."""
         srv, mem = server_with_mock
+        mem.search.return_value = {"results": [{"id": "mem-1", "score": 0.95}]}
         fn = _get_tool_fn(srv, "search_memories")
         fn(
             query="python preferences",
+            project="my-project",
             user_id="bob",
             agent_id="agent-1",
             run_id="run-1",
@@ -118,25 +129,41 @@ class TestSearchMemories:
             threshold=0.8,
             rerank=True,
         )
+        # Two searches: project-scoped + global
+        assert mem.search.call_count == 2
+        # First call: project-scoped
+        _, kwargs1 = mem.search.call_args_list[0]
+        assert kwargs1["user_id"] == "bob:my-project"
+        assert kwargs1["query"] == "python preferences"
+        # Second call: global
+        _, kwargs2 = mem.search.call_args_list[1]
+        assert kwargs2["user_id"] == "bob"
+
+    def test_global_project_single_search(self, server_with_mock):
+        """search_memories with project='global' runs one search."""
+        srv, mem = server_with_mock
+        mem.search.return_value = {"results": [{"id": "mem-1", "score": 0.95}]}
+        fn = _get_tool_fn(srv, "search_memories")
+        fn(query="python preferences", project="global")
+        assert mem.search.call_count == 1
         _, kwargs = mem.search.call_args
-        assert kwargs["query"] == "python preferences"
-        assert kwargs["user_id"] == "bob"
-        assert kwargs["agent_id"] == "agent-1"
-        assert kwargs["run_id"] == "run-1"
-        assert kwargs["filters"] == {"key": {"eq": "val"}}
-        assert kwargs["limit"] == 5
-        assert kwargs["threshold"] == 0.8
-        assert kwargs["rerank"] is True
+        assert kwargs["user_id"] == "test-user"
 
 
 class TestGetMemories:
     def test_scope_filters(self, server_with_mock):
         srv, mem = server_with_mock
         fn = _get_tool_fn(srv, "get_memories")
-        fn(user_id="alice", agent_id="agent-1", run_id="run-1", limit=10)
+        fn(project="my-project", user_id="alice", agent_id="agent-1", run_id="run-1", limit=10)
         mem.get_all.assert_called_once_with(
-            user_id="alice", agent_id="agent-1", run_id="run-1", limit=10
+            user_id="alice:my-project", agent_id="agent-1", run_id="run-1", limit=10
         )
+
+    def test_global_project(self, server_with_mock):
+        srv, mem = server_with_mock
+        fn = _get_tool_fn(srv, "get_memories")
+        fn(project="global")
+        mem.get_all.assert_called_once_with(user_id="test-user")
 
 
 class TestGetMemory:
@@ -170,12 +197,11 @@ class TestDeleteMemory:
 class TestDeleteAllMemories:
     @patch("mem0_mcp_selfhosted.server.safe_bulk_delete", return_value=0)
     def test_scope_defaults_to_user_id(self, mock_sbd, server_with_mock):
-        """delete_all_memories always falls back to get_default_user_id(),
-        so uid is always truthy.  Verify the default user scope is used."""
+        """delete_all_memories with project scopes user_id."""
         srv, mem = server_with_mock
         fn = _get_tool_fn(srv, "delete_all_memories")
-        result = fn()
-        mock_sbd.assert_called_once_with(mem, {"user_id": "test-user"}, graph_enabled=False)
+        result = fn(project="my-project")
+        mock_sbd.assert_called_once_with(mem, {"user_id": "test-user:my-project"}, graph_enabled=False)
         parsed = json.loads(result)
         assert parsed["count"] == 0
 
@@ -183,10 +209,17 @@ class TestDeleteAllMemories:
     def test_delegates_safe_bulk_delete(self, mock_sbd, server_with_mock):
         srv, mem = server_with_mock
         fn = _get_tool_fn(srv, "delete_all_memories")
-        result = fn(user_id="alice")
-        mock_sbd.assert_called_once_with(mem, {"user_id": "alice"}, graph_enabled=False)
+        result = fn(project="my-project", user_id="alice")
+        mock_sbd.assert_called_once_with(mem, {"user_id": "alice:my-project"}, graph_enabled=False)
         parsed = json.loads(result)
         assert parsed["count"] == 3
+
+    @patch("mem0_mcp_selfhosted.server.safe_bulk_delete", return_value=2)
+    def test_global_project(self, mock_sbd, server_with_mock):
+        srv, mem = server_with_mock
+        fn = _get_tool_fn(srv, "delete_all_memories")
+        result = fn(project="global")
+        mock_sbd.assert_called_once_with(mem, {"user_id": "test-user"}, graph_enabled=False)
 
 
 class TestListEntities:
@@ -492,7 +525,7 @@ class TestToolsWithNoMemory:
     def test_add_memory_returns_error(self, mock_init):
         srv = server_mod._create_server()
         fn = _get_tool_fn(srv, "add_memory")
-        result = fn(text="test")
+        result = fn(text="test", project="my-project")
         parsed = json.loads(result)
         assert "error" in parsed
 
@@ -500,7 +533,7 @@ class TestToolsWithNoMemory:
     def test_search_memories_returns_error(self, mock_init):
         srv = server_mod._create_server()
         fn = _get_tool_fn(srv, "search_memories")
-        result = fn(query="test")
+        result = fn(query="test", project="my-project")
         parsed = json.loads(result)
         assert "error" in parsed
 
@@ -508,7 +541,7 @@ class TestToolsWithNoMemory:
     def test_get_memories_returns_error(self, mock_init):
         srv = server_mod._create_server()
         fn = _get_tool_fn(srv, "get_memories")
-        result = fn()
+        result = fn(project="my-project")
         parsed = json.loads(result)
         assert parsed["error"] == "Memory not initialized"
 

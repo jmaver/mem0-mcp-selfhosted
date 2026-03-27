@@ -113,6 +113,10 @@ class TestContextMain:
         data.update(overrides)
         return json.dumps(data)
 
+    def _get_additional_context(self, result):
+        """Extract additionalContext from hookSpecificOutput."""
+        return result.get("hookSpecificOutput", {}).get("additionalContext")
+
     def test_memories_found(self):
         """When search returns memories, additionalContext is included."""
         fake_results = {
@@ -130,10 +134,11 @@ class TestContextMain:
 
         assert result["continue"] is True
         assert result["suppressOutput"] is True
-        assert "additionalContext" in result
-        assert "TypeScript" in result["additionalContext"]
-        assert "pytest" in result["additionalContext"]
-        assert "# mem0 Cross-Session Memory" in result["additionalContext"]
+        ctx = self._get_additional_context(result)
+        assert ctx is not None
+        assert "TypeScript" in ctx
+        assert "pytest" in ctx
+        assert "# mem0 Cross-Session Memory" in ctx
 
     def test_no_memories_omits_additional_context(self):
         """When no memories found, additionalContext is absent."""
@@ -145,27 +150,28 @@ class TestContextMain:
 
         assert result["continue"] is True
         assert result["suppressOutput"] is True
-        assert "additionalContext" not in result
+        assert "hookSpecificOutput" not in result
 
     def test_deduplication_across_queries(self):
-        """Duplicate memory IDs across queries are deduplicated."""
+        """Duplicate memory IDs across searches are deduplicated."""
         mock_mem = MagicMock()
-        # Both queries return overlapping results
+        # search_with_project calls mem.search twice per query (project + global),
+        # and context_main runs 2 queries = 4 total search calls
         mock_mem.search.side_effect = [
-            {"results": [
-                {"id": "m1", "memory": "fact one"},
-                {"id": "m2", "memory": "fact two"},
-            ]},
-            {"results": [
-                {"id": "m2", "memory": "fact two"},  # duplicate
-                {"id": "m3", "memory": "fact three"},
-            ]},
+            # Query 1, project-scoped
+            {"results": [{"id": "m1", "memory": "fact one"}]},
+            # Query 1, global
+            {"results": [{"id": "m2", "memory": "fact two"}]},
+            # Query 2, project-scoped
+            {"results": [{"id": "m2", "memory": "fact two"}]},  # duplicate
+            # Query 2, global
+            {"results": [{"id": "m3", "memory": "fact three"}]},
         ]
 
         with patch.object(hooks, "_get_memory", return_value=mock_mem):
             result = _capture_output(hooks.context_main, self._make_stdin())
 
-        ctx = result["additionalContext"]
+        ctx = self._get_additional_context(result)
         # m2 should appear only once
         assert ctx.count("fact two") == 1
         assert "fact one" in ctx
@@ -181,7 +187,8 @@ class TestContextMain:
         with patch.object(hooks, "_get_memory", return_value=mock_mem):
             result = _capture_output(hooks.context_main, self._make_stdin())
 
-        assert "plain list result" in result["additionalContext"]
+        ctx = self._get_additional_context(result)
+        assert "plain list result" in ctx
 
     def test_exception_returns_nonfatal(self):
         """Any exception produces a non-fatal response."""
@@ -199,7 +206,8 @@ class TestContextMain:
         with patch.object(hooks, "_get_memory", return_value=mock_mem):
             result = _capture_output(hooks.context_main, self._make_stdin())
 
-        lines = [l for l in result["additionalContext"].split("\n") if l and l[0].isdigit()]
+        ctx = self._get_additional_context(result)
+        lines = [l for l in ctx.split("\n") if l and l[0].isdigit()]
         assert len(lines) == hooks._MAX_MEMORIES
 
     def test_empty_cwd_uses_project_fallback(self):
@@ -212,10 +220,10 @@ class TestContextMain:
         with patch.object(hooks, "_get_memory", return_value=mock_mem):
             result = _capture_output(hooks.context_main, self._make_stdin(cwd=""))
 
-        # Verify search was called with 'project' fallback
-        first_query = mock_mem.search.call_args_list[0].kwargs["query"]
-        assert "project" in first_query
-        assert "additionalContext" in result
+        # Verify search was called with 'project' fallback in user_id
+        first_uid = mock_mem.search.call_args_list[0].kwargs["user_id"]
+        assert "project" in first_uid
+        assert self._get_additional_context(result) is not None
 
 
 # ---------------------------------------------------------------------------

@@ -110,28 +110,28 @@ def _nonfatal() -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _extract_results(raw) -> list[dict]:
-    """Normalise mem0 search results to a flat list of dicts."""
-    if isinstance(raw, dict):
-        return raw.get("results", [])
-    if isinstance(raw, list):
-        return raw
-    return []
-
-
 def context_main() -> None:
     """SessionStart hook: inject cross-session memories as additionalContext."""
+    _log_hook_event("context", "hook entry point reached")
     try:
-        hook_input = json.loads(sys.stdin.read())
+        raw_stdin = sys.stdin.read()
+        _log_hook_event("context", f"stdin length={len(raw_stdin)}")
+        hook_input = json.loads(raw_stdin)
+        _log_hook_event("context", f"parsed input keys={list(hook_input.keys())}")
         cwd = hook_input.get("cwd", "")
         project_name = Path(cwd).name if cwd else "project"
         if not project_name:
             project_name = "project"
         user_id = _get_user_id()
+        _log_hook_event("context", f"project='{project_name}' user_id='{user_id}' cwd='{cwd}'")
 
+        _log_hook_event("context", "initializing memory client...")
         mem = _get_memory()
+        _log_hook_event("context", "memory client ready")
 
         # --- Multi-query search with deduplication ---
+        from mem0_mcp_selfhosted.helpers import search_with_project
+
         seen_ids: set[str] = set()
         all_memories: list[dict] = []
 
@@ -141,9 +141,9 @@ def context_main() -> None:
         ]
 
         for query in queries:
-            results = _extract_results(
-                mem.search(query=query, user_id=user_id, limit=15)
-            )
+            _log_hook_event("context", f"searching: {query[:60]}...")
+            results = search_with_project(mem, query, user_id, project_name, limit=15)
+            _log_hook_event("context", f"  -> {len(results)} results")
             for r in results:
                 mid = r.get("id")
                 if mid and mid not in seen_ids:
@@ -171,11 +171,13 @@ def context_main() -> None:
             "hookEventName": "SessionStart",
             "additionalContext": context_text,
         }
+        _log_hook_event("context", f"outputting response with additionalContext ({len(context_text)} chars)")
         _output(response)
 
     except Exception as exc:
+        import traceback
+        _log_hook_event("context", f"FAILED: {exc}\n{traceback.format_exc()}")
         logger.debug("context_main failed", exc_info=True)
-        _log_hook_event("context", f"FAILED: {exc}")
         _output(_nonfatal())
 
 
@@ -282,9 +284,13 @@ def stop_main() -> None:
         mem = _get_memory()
         user_id = _get_user_id()
 
+        from mem0_mcp_selfhosted.helpers import make_project_user_id
+
+        project_uid = make_project_user_id(user_id, project_name)
+
         mem.add(
             messages=[{"role": "user", "content": summary}],
-            user_id=user_id,
+            user_id=project_uid,
             infer=True,
             metadata={
                 "source": "session-stop-hook",
@@ -292,7 +298,7 @@ def stop_main() -> None:
             },
         )
 
-        _log_hook_event("stop", f"saved session for project '{project_name}'")
+        _log_hook_event("stop", f"saved session for project '{project_name}' (user_id={project_uid})")
         _output(_nonfatal())
 
     except Exception as exc:

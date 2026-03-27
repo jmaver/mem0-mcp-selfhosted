@@ -29,13 +29,13 @@ EXPECTED_TOOLS = {
 
 # Required parameters per tool (tool_name -> set of required param names)
 REQUIRED_PARAMS = {
-    "add_memory": {"text"},
-    "search_memories": {"query"},
-    "get_memories": set(),
+    "add_memory": {"text", "project"},
+    "search_memories": {"query", "project"},
+    "get_memories": {"project"},
     "get_memory": {"memory_id"},
     "update_memory": {"memory_id", "text"},
     "delete_memory": {"memory_id"},
-    "delete_all_memories": set(),
+    "delete_all_memories": {"project"},
     "list_entities": set(),
     "delete_entities": set(),
     "mcp_search_graph": {"query"},
@@ -114,7 +114,7 @@ class TestCallToolRoundTrip:
     @pytest.mark.asyncio
     async def test_add_memory(self, mcp_server, mock_memory):
         content_blocks, _ = await mcp_server.call_tool(
-            "add_memory", {"text": "I prefer Python"}
+            "add_memory", {"text": "I prefer Python", "project": "my-project"}
         )
         assert len(content_blocks) > 0
         text = content_blocks[0].text
@@ -125,13 +125,15 @@ class TestCallToolRoundTrip:
     @pytest.mark.asyncio
     async def test_search_memories(self, mcp_server, mock_memory):
         content_blocks, _ = await mcp_server.call_tool(
-            "search_memories", {"query": "Python preferences"}
+            "search_memories", {"query": "Python preferences", "project": "my-project"}
         )
         assert len(content_blocks) > 0
         text = content_blocks[0].text
         parsed = json.loads(text)
-        assert "results" in parsed
-        mock_memory.search.assert_called_once()
+        # search_with_project returns a list, not {"results": [...]}
+        assert isinstance(parsed, list)
+        # Two searches: project-scoped + global
+        assert mock_memory.search.call_count == 2
 
 
 # ============================================================

@@ -22,13 +22,16 @@ from mem0_mcp_selfhosted.config import ProviderInfo, build_config
 from mem0_mcp_selfhosted.env import bool_env, env
 from mem0_mcp_selfhosted.graph_tools import get_entity, search_graph
 from mem0_mcp_selfhosted.helpers import (
+    PROJECT_GLOBAL,
     _mem0_call,
     call_with_graph,
     get_default_user_id,
     list_entities_facet,
+    make_project_user_id,
     patch_gemini_parse_response,
     patch_graph_sanitizer,
     safe_bulk_delete,
+    search_with_project,
 )
 
 logger = logging.getLogger(__name__)
@@ -163,6 +166,8 @@ def _create_server() -> FastMCP:
         port=port,
         instructions=(
             "Memory tools for persistent cross-session memory. "
+            "IMPORTANT: Always pass the 'project' parameter with the current project directory name "
+            "(e.g. 'my-project'). Use project='global' only for cross-project memories. "
             "Use search_memories to find relevant context before starting work. "
             "Use add_memory to store important facts, preferences, and decisions. "
             "Use get_memories to browse stored memories with filters. "
@@ -190,6 +195,7 @@ def _register_tools(mcp: FastMCP) -> None:
     @mcp.tool()
     def add_memory(
         text: Annotated[str, Field(description="Text to store as a memory. Converted to messages format internally.")],
+        project: Annotated[str, Field(description="Project directory name for scoping. Use 'global' for cross-project memories.")],
         messages: Annotated[list[dict] | None, Field(description="Structured conversation history (role/content dicts). When provided, takes precedence over text.")] = None,
         user_id: Annotated[str | None, Field(description="User scope identifier. Defaults to MEM0_USER_ID.")] = None,
         agent_id: Annotated[str | None, Field(description="Agent scope identifier.")] = None,
@@ -199,7 +205,7 @@ def _register_tools(mcp: FastMCP) -> None:
         enable_graph: Annotated[bool | None, Field(description="Override default graph toggle for this call.")] = None,
     ) -> str:
         """Store a new memory. Requires at least one of user_id, agent_id, or run_id."""
-        uid = user_id or get_default_user_id()
+        uid = make_project_user_id(user_id or get_default_user_id(), project)
 
         # Build messages for mem0ai
         if messages:
@@ -227,6 +233,7 @@ def _register_tools(mcp: FastMCP) -> None:
     @mcp.tool()
     def search_memories(
         query: Annotated[str, Field(description="Natural language description of what to find.")],
+        project: Annotated[str, Field(description="Project directory name. Returns project + global memories. Use 'global' for global only.")],
         user_id: Annotated[str | None, Field(description="User scope. Defaults to MEM0_USER_ID.")] = None,
         agent_id: Annotated[str | None, Field(description="Agent scope.")] = None,
         run_id: Annotated[str | None, Field(description="Run scope.")] = None,
@@ -236,39 +243,39 @@ def _register_tools(mcp: FastMCP) -> None:
         rerank: Annotated[bool | None, Field(description="Whether to apply reranking.")] = None,
         enable_graph: Annotated[bool | None, Field(description="Override default graph toggle.")] = None,
     ) -> str:
-        """Semantic search across existing memories."""
+        """Semantic search across existing memories. Searches project-scoped + global memories."""
         uid = user_id or get_default_user_id()
-
-        kwargs: dict[str, Any] = {"user_id": uid, "query": query}
-        if agent_id:
-            kwargs["agent_id"] = agent_id
-        if run_id:
-            kwargs["run_id"] = run_id
-        if filters:
-            kwargs["filters"] = filters
-        if limit is not None:
-            kwargs["limit"] = limit
-        if threshold is not None:
-            kwargs["threshold"] = threshold
-        if rerank is not None:
-            kwargs["rerank"] = rerank
-
         mem = _ensure_memory()
 
+        search_kwargs: dict[str, Any] = {}
+        if agent_id:
+            search_kwargs["agent_id"] = agent_id
+        if run_id:
+            search_kwargs["run_id"] = run_id
+        if filters:
+            search_kwargs["filters"] = filters
+        if limit is not None:
+            search_kwargs["limit"] = limit
+        if threshold is not None:
+            search_kwargs["threshold"] = threshold
+        if rerank is not None:
+            search_kwargs["rerank"] = rerank
+
         def _do_search():
-            return mem.search(**kwargs)
+            return search_with_project(mem, query, uid, project, **search_kwargs)
 
         return _mem0_call(call_with_graph, mem, enable_graph, _enable_graph_default, _do_search)
 
     @mcp.tool()
     def get_memories(
+        project: Annotated[str, Field(description="Project directory name. Use 'global' for global memories.")],
         user_id: Annotated[str | None, Field(description="User scope. Defaults to MEM0_USER_ID.")] = None,
         agent_id: Annotated[str | None, Field(description="Agent scope.")] = None,
         run_id: Annotated[str | None, Field(description="Run scope.")] = None,
         limit: Annotated[int | None, Field(description="Maximum number of memories to return.")] = None,
     ) -> str:
-        """Page through memories using filters instead of search."""
-        uid = user_id or get_default_user_id()
+        """Page through memories for a specific project scope."""
+        uid = make_project_user_id(user_id or get_default_user_id(), project)
 
         kwargs: dict[str, Any] = {"user_id": uid}
         if agent_id:
@@ -326,6 +333,7 @@ def _register_tools(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def delete_all_memories(
+        project: Annotated[str, Field(description="Project directory name. Use 'global' for global memories.")],
         user_id: Annotated[str | None, Field(description="User scope to delete.")] = None,
         agent_id: Annotated[str | None, Field(description="Agent scope to delete.")] = None,
         run_id: Annotated[str | None, Field(description="Run scope to delete.")] = None,
@@ -334,7 +342,7 @@ def _register_tools(mcp: FastMCP) -> None:
 
         NEVER calls memory.delete_all() — uses safe bulk-delete instead.
         """
-        uid = user_id or get_default_user_id()
+        uid = make_project_user_id(user_id or get_default_user_id(), project)
         if not any([uid, agent_id, run_id]):
             return json.dumps(
                 {"error": "At least one scope (user_id, agent_id, or run_id) is required."},
@@ -446,11 +454,16 @@ def _register_prompts(mcp: FastMCP) -> None:
         return (
             "You are using the mem0 MCP server for long-term memory management.\n\n"
             "Quick Start:\n"
-            "1. Store memories: Use add_memory to save facts, preferences, or conversations\n"
-            "2. Search memories: Use search_memories for semantic queries\n"
-            "3. Browse memories: Use get_memories for filtered listing\n"
+            "1. Store memories: Use add_memory with project=<directory name> to save facts\n"
+            "2. Search memories: Use search_memories with project=<directory name> for semantic queries\n"
+            "3. Browse memories: Use get_memories with project=<directory name> for filtered listing\n"
             "4. Update/Delete: Use update_memory and delete_memory for modifications\n"
             "5. Graph exploration: Use search_graph and get_entity for entity relationships\n\n"
+            "Project Scoping:\n"
+            "- Always pass project=<current directory name> (e.g. 'my-app')\n"
+            "- Memories are scoped per project — each project has its own memory space\n"
+            "- Use project='global' for memories that should be accessible from all projects\n"
+            "- search_memories automatically returns both project-scoped and global results\n\n"
             "Tips:\n"
             "- user_id is automatically injected from MEM0_USER_ID default\n"
             "- Set enable_graph=true to include knowledge graph results\n"

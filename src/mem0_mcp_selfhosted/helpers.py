@@ -137,9 +137,71 @@ def patch_gemini_parse_response() -> None:
 _graph_lock = threading.Lock()
 
 
+PROJECT_GLOBAL = "global"
+"""Sentinel value for the ``project`` parameter meaning 'no project scope'."""
+
+
 def get_default_user_id() -> str:
     """Get the default user_id from MEM0_USER_ID env var."""
     return env("MEM0_USER_ID", "user")
+
+
+def make_project_user_id(user_id: str, project: str | None) -> str:
+    """Build a project-scoped user_id.
+
+    - ``project=None`` or ``project=PROJECT_GLOBAL`` → bare ``user_id`` (global)
+    - otherwise → ``user_id:project``
+    """
+    if not project or project == PROJECT_GLOBAL:
+        return user_id
+    return f"{user_id}:{project}"
+
+
+def search_with_project(
+    mem: Any,
+    query: str,
+    user_id: str,
+    project: str | None,
+    **kwargs: Any,
+) -> list[dict]:
+    """Search memories across project scope + global, deduplicated.
+
+    When *project* is set (and not ``"global"``), runs two searches:
+    1. project-scoped (``user_id:project``)
+    2. global (bare ``user_id``)
+
+    Results are deduplicated by memory ID, project results first.
+    When *project* is None or ``"global"``, searches global only.
+    """
+    limit = kwargs.pop("limit", 15)
+    seen: set[str] = set()
+    merged: list[dict] = []
+
+    def _collect(results: list[dict]) -> None:
+        for r in results:
+            mid = r.get("id")
+            if mid and mid not in seen:
+                seen.add(mid)
+                merged.append(r)
+
+    def _extract(raw: Any) -> list[dict]:
+        if isinstance(raw, dict):
+            return raw.get("results", [])
+        if isinstance(raw, list):
+            return raw
+        return []
+
+    if project and project != PROJECT_GLOBAL:
+        # Project-scoped search
+        project_uid = make_project_user_id(user_id, project)
+        raw = mem.search(query=query, user_id=project_uid, limit=limit, **kwargs)
+        _collect(_extract(raw))
+
+    # Global search
+    raw = mem.search(query=query, user_id=user_id, limit=limit, **kwargs)
+    _collect(_extract(raw))
+
+    return merged
 
 
 def _mem0_call(func: Callable, *args: Any, **kwargs: Any) -> str:

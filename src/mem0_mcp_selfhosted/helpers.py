@@ -177,11 +177,12 @@ def search_with_project(
     seen: set[str] = set()
     merged: list[dict] = []
 
-    def _collect(results: list[dict]) -> None:
+    def _collect(results: list[dict], scope: str) -> None:
         for r in results:
             mid = r.get("id")
             if mid and mid not in seen:
                 seen.add(mid)
+                r["scope"] = scope
                 merged.append(r)
 
     def _extract(raw: Any) -> list[dict]:
@@ -195,11 +196,11 @@ def search_with_project(
         # Project-scoped search
         project_uid = make_project_user_id(user_id, project)
         raw = mem.search(query=query, user_id=project_uid, limit=limit, **kwargs)
-        _collect(_extract(raw))
+        _collect(_extract(raw), "project")
 
     # Global search
     raw = mem.search(query=query, user_id=user_id, limit=limit, **kwargs)
-    _collect(_extract(raw))
+    _collect(_extract(raw), "global")
 
     return merged
 

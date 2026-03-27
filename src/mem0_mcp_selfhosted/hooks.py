@@ -158,11 +158,25 @@ def context_main() -> None:
             _output(_nonfatal())
             return
 
-        # Format as numbered lines
+        # Group by scope and format
+        project_mems = [m for m in all_memories if m.get("scope") == "project"]
+        global_mems = [m for m in all_memories if m.get("scope") == "global"]
+
         lines = ["# mem0 Cross-Session Memory\n"]
-        for i, m in enumerate(all_memories, 1):
-            text = m.get("memory", m.get("text", ""))
-            lines.append(f"{i}. {text}")
+        i = 1
+        if project_mems:
+            lines.append(f"## Project: {project_name}")
+            for m in project_mems:
+                text = m.get("memory", m.get("text", ""))
+                lines.append(f"{i}. {text}")
+                i += 1
+            lines.append("")
+        if global_mems:
+            lines.append("## Global")
+            for m in global_mems:
+                text = m.get("memory", m.get("text", ""))
+                lines.append(f"{i}. {text}")
+                i += 1
 
         _log_hook_event("context", f"injected {len(all_memories)} memories for project '{project_name}'")
         context_text = "\n".join(lines)

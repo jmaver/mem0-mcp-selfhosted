@@ -239,10 +239,13 @@ def _read_recent_messages(transcript_path: str) -> list[tuple[str, str]]:
             except json.JSONDecodeError:
                 continue
 
-            role = entry.get("role", "")
+            # Claude Code transcripts nest the message inside a "message" key:
+            # {type: "user", message: {role: "user", content: [...]}}
+            msg = entry.get("message", entry)
+            role = msg.get("role", "")
             if role not in ("user", "assistant"):
                 continue
-            content = _extract_content(entry.get("content", ""))[:_MAX_CONTENT_LEN]
+            content = _extract_content(msg.get("content", ""))[:_MAX_CONTENT_LEN]
             if content:
                 messages.append((role, content))
 

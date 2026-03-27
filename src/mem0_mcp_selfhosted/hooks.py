@@ -254,11 +254,16 @@ def _read_recent_messages(transcript_path: str) -> list[tuple[str, str]]:
 
 def stop_main() -> None:
     """Stop hook: save session summary to mem0."""
+    _log_hook_event("stop", "hook entry point reached")
     try:
-        hook_input = json.loads(sys.stdin.read())
+        raw_stdin = sys.stdin.read()
+        _log_hook_event("stop", f"stdin length={len(raw_stdin)}")
+        hook_input = json.loads(raw_stdin)
+        _log_hook_event("stop", f"parsed input keys={list(hook_input.keys())}")
 
         # Infinite-loop guard: Claude Code sets this when re-entering
         if hook_input.get("stop_hook_active"):
+            _log_hook_event("stop", "stop_hook_active guard — skipping")
             _output(_nonfatal())
             return
 
@@ -269,18 +274,23 @@ def stop_main() -> None:
         if not project_name:
             project_name = "project"
 
+        _log_hook_event("stop", f"project='{project_name}' transcript='{transcript_path}' cwd='{cwd}'")
+
         # Missing / invalid transcript
         if not transcript_path or not Path(transcript_path).is_file():
+            _log_hook_event("stop", f"no valid transcript — skipping")
             _output(_nonfatal())
             return
 
         recent = _read_recent_messages(transcript_path)
+        _log_hook_event("stop", f"read {len(recent)} recent messages")
 
         # Skip short sessions — AND means we save when *either* side
         # contributed meaningful content (e.g. short question + long answer).
         user_total = sum(len(c) for r, c in recent if r == "user")
         asst_total = sum(len(c) for r, c in recent if r == "assistant")
         if user_total < _MIN_USER_LEN and asst_total < _MIN_ASSISTANT_LEN:
+            _log_hook_event("stop", f"session too short (user={user_total}, asst={asst_total}) — skipping")
             _output(_nonfatal())
             return
 
@@ -297,13 +307,17 @@ def stop_main() -> None:
             "Extract key decisions, solutions found, patterns discovered, "
             "configuration changes, and important context for future sessions."
         )
+        _log_hook_event("stop", f"summary length={len(summary)} chars")
 
+        _log_hook_event("stop", "initializing memory client...")
         mem = _get_memory()
+        _log_hook_event("stop", "memory client ready")
         user_id = _get_user_id()
 
         from mem0_mcp_selfhosted.helpers import make_project_user_id
 
         project_uid = make_project_user_id(user_id, project_name)
+        _log_hook_event("stop", f"calling mem.add (user_id={project_uid})...")
 
         mem.add(
             messages=[{"role": "user", "content": summary}],

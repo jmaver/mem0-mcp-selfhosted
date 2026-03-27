@@ -88,7 +88,7 @@ Add these rules to your project's `CLAUDE.md` (or `~/.claude/CLAUDE.md` for glob
 ```markdown
 # MCP Servers
 
-- **mem0**: Persistent memory across sessions. At the start of each session, `search_memories` for relevant context before asking the user to re-explain anything. Use `add_memory` whenever you discover project architecture, coding conventions, debugging insights, key decisions, or user preferences. Use `update_memory` when prior context changes. Save information like: "This project uses PostgreSQL with Prisma", "Tests run with pytest -v", "Auth uses JWT validated in middleware". When in doubt, save it, future sessions benefit from over-remembering.
+- **mem0**: Persistent memory across sessions. Always pass `project` parameter with the current project directory name (e.g. `project="my-project"`). Use `project="global"` only for cross-project memories. At the start of each session, `search_memories` for relevant context before asking the user to re-explain anything. Use `add_memory` whenever you discover project architecture, coding conventions, debugging insights, key decisions, or user preferences. Use `update_memory` when prior context changes. Save information like: "This project uses PostgreSQL with Prisma", "Tests run with pytest -v", "Auth uses JWT validated in middleware". When in doubt, save it, future sessions benefit from over-remembering.
 ```
 
 This gives Claude Code behavioral instructions to actively search and save memories during the session. For best results, combine with [Claude Code Hooks](#claude-code-hooks), the CLAUDE.md rules tell Claude *how to use* memory tools mid-session, while hooks handle the *automatic* injection and saving at session boundaries.
@@ -122,9 +122,9 @@ This adds the hook entries to `.claude/settings.json`. The installer is idempote
 
 ### How it works
 
-**On session start**, the context hook searches mem0 with two queries (project architecture + recent session summaries), deduplicates by memory ID, and formats the results as numbered lines under a `# mem0 Cross-Session Memory` header. These are injected via the hook's `additionalContext` response field.
+**On session start**, the context hook searches mem0 with two queries (project architecture + recent session summaries). Each query runs two searches — project-scoped and global — and results are deduplicated by memory ID and grouped under `## Project: <name>` and `## Global` headings. These are injected via the hook's `additionalContext` response field.
 
-**On session stop**, the stop hook reads the JSONL transcript, extracts the last 6 user/assistant messages (a sliding window via bounded deque), builds a summary prompt, and calls `memory.add(infer=True)` to extract atomic facts. Graph is force-disabled in hooks to stay within the 15s/30s timeout budgets.
+**On session stop**, the stop hook reads the JSONL transcript, extracts the last ~10 user/assistant messages (a sliding window via bounded deque), builds a summary prompt, and calls `memory.add(infer=True)` to extract atomic facts. Session summaries are saved as project-scoped memories. Graph is force-disabled in hooks to stay within the 15s/60s timeout budgets.
 
 ### Entry points
 
@@ -146,6 +146,34 @@ Hooks and CLAUDE.md are complementary layers that work best together:
 Hooks alone give you passive recall (memories appear at startup) and passive saving (summaries saved at exit). CLAUDE.md instructions add active mid-session behavior, Claude searches for relevant memories when encountering new topics, and saves important discoveries immediately rather than waiting for session end.
 
 For the best experience, use both. Hooks ensure memories flow in and out automatically at session boundaries, while CLAUDE.md ensures Claude actively engages with memory tools during the session.
+
+## Project-Scoped Memory
+
+Memories are isolated per project using `user_id` encoding. When you pass `project="my-app"`, the memory is stored under `user_id:my-app` (e.g. `jmaver:my-app`). Global memories use the bare `user_id` (e.g. `jmaver`).
+
+| Scope | user_id | When to use |
+|-------|---------|-------------|
+| **Project** | `jmaver:my-app` | Default. Architecture, conventions, decisions specific to this project |
+| **Global** | `jmaver` | Cross-project preferences, tools, environment setup |
+
+### How it works
+
+- **Saving** defaults to project-scoped. Pass `project="global"` to save globally.
+- **Searching** with a project returns both project-scoped and global results, but excludes other projects. Results are tagged with `scope: "project"` or `scope: "global"`.
+- **Hooks** automatically scope by the current working directory — no manual `project` param needed.
+- **Existing memories** (created before project scoping) live under the bare `user_id` and are treated as global.
+
+### MCP tool behavior
+
+| Tool | project param | Behavior |
+|------|--------------|----------|
+| `add_memory` | Required | Stores under `user_id:project` (or bare `user_id` if `"global"`) |
+| `search_memories` | Required | Two searches (project + global), merged and deduplicated |
+| `get_memories` | Required | Lists memories for one scope |
+| `delete_all_memories` | Required | Deletes within the specified scope |
+| `update_memory` | Not needed | Operates by memory ID |
+| `delete_memory` | Not needed | Operates by memory ID |
+| `get_memory` | Not needed | Operates by memory ID |
 
 ## Authentication
 
@@ -170,13 +198,13 @@ The server resolves an Anthropic token using a prioritized fallback chain:
 
 | Tool | Description |
 |------|-------------|
-| `add_memory` | Store text or conversation history as memories. Supports `enable_graph`, `infer`, `metadata`. |
-| `search_memories` | Semantic search with optional `filters`, `threshold`, `rerank`, `enable_graph`. |
-| `get_memories` | List/filter memories (non-search). Supports `limit` and scope filters. |
+| `add_memory` | Store text or conversation history as memories. Requires `project`. Supports `enable_graph`, `infer`, `metadata`. |
+| `search_memories` | Semantic search across project + global memories. Requires `project`. Supports `filters`, `threshold`, `rerank`, `enable_graph`. |
+| `get_memories` | List memories for a project scope. Requires `project`. Supports `limit` and scope filters. |
 | `get_memory` | Fetch a single memory by UUID. |
 | `update_memory` | Replace memory text. Re-embeds and re-indexes in Qdrant. |
 | `delete_memory` | Delete a single memory by UUID. |
-| `delete_all_memories` | Bulk-delete all memories in a scope. |
+| `delete_all_memories` | Bulk-delete all memories in a scope. Requires `project`. |
 | `list_entities` | List users/agents/runs with memory counts. Uses Qdrant Facet API. |
 | `delete_entities` | Cascade-delete an entity and all its memories. |
 
@@ -195,6 +223,7 @@ The server registers a `memory_assistant` MCP prompt that provides Claude with a
 
 All tools use Pydantic `Annotated[type, Field(description=...)]` for self-documenting parameter schemas. Common patterns:
 
+- **`project`** (required on most tools) scopes memories per project. Use the directory name (e.g. `"my-app"`) or `"global"` for cross-project memories
 - **`user_id`** defaults to `MEM0_USER_ID` env var when not provided
 - **`enable_graph`** overrides the default `MEM0_ENABLE_GRAPH` per-call
 - **`filters`** supports structured operators: `{"key": {"eq": "value"}}`, `{"AND": [...]}`

@@ -2,9 +2,6 @@
 
 This file provides guidance to Claude Code when working with code in this repository.
 
-## MCP Servers
-
-- **mem0**: Persistent memory across sessions. Always pass `project` parameter with the current project directory name (e.g. `project="mem0-mcp-selfhosted"`). Use `project="global"` only for cross-project memories. At the start of each session, `search_memories` for relevant context before asking the user to re-explain anything. Use `add_memory` whenever you discover project architecture, coding conventions, debugging insights, key decisions, or user preferences. Use `update_memory` when prior context changes. Save information like: "This project uses PostgreSQL with Prisma", "Tests run with pytest -v", "Auth uses JWT validated in middleware". When in doubt, save it — future sessions benefit from over-remembering.
 
 ## Build & Test Commands
 

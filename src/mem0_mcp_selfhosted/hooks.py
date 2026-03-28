@@ -1,9 +1,9 @@
 """Claude Code session hooks for mem0-mcp-selfhosted.
 
 Three entry points registered in pyproject.toml:
-- mem0-hook-context  -> context_main()   (SessionStart)
-- mem0-hook-stop     -> stop_main()      (Stop)
-- mem0-install-hooks -> install_main()   (CLI installer)
+- mem0-hook-context       -> context_main()        (SessionStart)
+- mem0-hook-session-end   -> session_end_main()    (SessionEnd)
+- mem0-install-hooks      -> install_main()         (CLI installer)
 """
 
 from __future__ import annotations
@@ -77,8 +77,6 @@ def _get_memory():
 
 
 _HOOK_LOG = Path(tempfile.gettempdir()) / "mem0-hook-context.log"
-_STOP_STATE_FILE = Path(tempfile.gettempdir()) / "mem0-stop-state.json"
-_MIN_NEW_LINES = 6  # minimum new transcript lines required between saves for the same session
 
 
 def _log_hook_event(hook: str, msg: str) -> None:
@@ -91,37 +89,6 @@ def _log_hook_event(hook: str, msg: str) -> None:
             f.write(f"{ts} [{hook}] {msg}\n")
     except OSError:
         pass
-
-
-def _load_stop_state() -> dict:
-    """Load per-session save-state from temp file (best-effort)."""
-    try:
-        if _STOP_STATE_FILE.exists():
-            return json.loads(_STOP_STATE_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        pass
-    return {}
-
-
-def _save_stop_state(state: dict) -> None:
-    """Persist per-session save-state to temp file (best-effort)."""
-    try:
-        _STOP_STATE_FILE.write_text(json.dumps(state), encoding="utf-8")
-    except OSError:
-        pass
-
-
-def _count_transcript_lines(transcript_path: str) -> int:
-    """Count non-empty lines in transcript without full JSON parsing."""
-    try:
-        count = 0
-        with open(transcript_path, encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
-                    count += 1
-        return count
-    except OSError:
-        return 0
 
 
 def _output(data: dict) -> None:
@@ -229,7 +196,7 @@ def context_main() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Stop Hook
+# SessionEnd Hook
 # ---------------------------------------------------------------------------
 
 
@@ -285,20 +252,14 @@ def _read_recent_messages(transcript_path: str) -> list[tuple[str, str]]:
     return list(messages)
 
 
-def stop_main() -> None:
-    """Stop hook: save session summary to mem0."""
-    _log_hook_event("stop", "hook entry point reached")
+def session_end_main() -> None:
+    """SessionEnd hook: save session summary to mem0."""
+    _log_hook_event("session_end", "hook entry point reached")
     try:
         raw_stdin = sys.stdin.read()
-        _log_hook_event("stop", f"stdin length={len(raw_stdin)}")
+        _log_hook_event("session_end", f"stdin length={len(raw_stdin)}")
         hook_input = json.loads(raw_stdin)
-        _log_hook_event("stop", f"parsed input keys={list(hook_input.keys())}")
-
-        # Infinite-loop guard: Claude Code sets this when re-entering
-        if hook_input.get("stop_hook_active"):
-            _log_hook_event("stop", "stop_hook_active guard — skipping")
-            _output(_nonfatal())
-            return
+        _log_hook_event("session_end", f"parsed input keys={list(hook_input.keys())}")
 
         session_id = hook_input.get("session_id", "")
         transcript_path = hook_input.get("transcript_path", "")
@@ -307,37 +268,23 @@ def stop_main() -> None:
         if not project_name:
             project_name = "project"
 
-        _log_hook_event("stop", f"project='{project_name}' transcript='{transcript_path}' cwd='{cwd}'")
+        _log_hook_event("session_end", f"project='{project_name}' transcript='{transcript_path}' cwd='{cwd}'")
 
         # Missing / invalid transcript
         if not transcript_path or not Path(transcript_path).is_file():
-            _log_hook_event("stop", f"no valid transcript — skipping")
+            _log_hook_event("session_end", "no valid transcript — skipping")
             _output(_nonfatal())
             return
 
         recent = _read_recent_messages(transcript_path)
-        _log_hook_event("stop", f"read {len(recent)} recent messages")
+        _log_hook_event("session_end", f"read {len(recent)} recent messages")
 
         # Skip short sessions — AND means we save when *either* side
         # contributed meaningful content (e.g. short question + long answer).
         user_total = sum(len(c) for r, c in recent if r == "user")
         asst_total = sum(len(c) for r, c in recent if r == "assistant")
         if user_total < _MIN_USER_LEN and asst_total < _MIN_ASSISTANT_LEN:
-            _log_hook_event("stop", f"session too short (user={user_total}, asst={asst_total}) — skipping")
-            _output(_nonfatal())
-            return
-
-        # Debounce: the Stop hook fires after *every* assistant turn, not only at
-        # true session end.  For sessions we've already saved, require _MIN_NEW_LINES
-        # of new transcript content before saving again.  First save is always allowed.
-        line_count = _count_transcript_lines(transcript_path)
-        stop_state = _load_stop_state()
-        last_saved_lines = stop_state.get(session_id, 0)
-        if last_saved_lines > 0 and (line_count - last_saved_lines) < _MIN_NEW_LINES:
-            _log_hook_event(
-                "stop",
-                f"debounce: only {line_count - last_saved_lines} new lines since last save — skipping",
-            )
+            _log_hook_event("session_end", f"session too short (user={user_total}, asst={asst_total}) — skipping")
             _output(_nonfatal())
             return
 
@@ -354,38 +301,34 @@ def stop_main() -> None:
             "Extract key decisions, solutions found, patterns discovered, "
             "configuration changes, and important context for future sessions."
         )
-        _log_hook_event("stop", f"summary length={len(summary)} chars")
+        _log_hook_event("session_end", f"summary length={len(summary)} chars")
 
-        _log_hook_event("stop", "initializing memory client...")
+        _log_hook_event("session_end", "initializing memory client...")
         mem = _get_memory()
-        _log_hook_event("stop", "memory client ready")
+        _log_hook_event("session_end", "memory client ready")
         user_id = _get_user_id()
 
         from mem0_mcp_selfhosted.helpers import make_project_user_id
 
         project_uid = make_project_user_id(user_id, project_name)
-        _log_hook_event("stop", f"calling mem.add (user_id={project_uid})...")
+        _log_hook_event("session_end", f"calling mem.add (user_id={project_uid})...")
 
         mem.add(
             messages=[{"role": "user", "content": summary}],
             user_id=project_uid,
             infer=True,
             metadata={
-                "source": "session-stop-hook",
+                "source": "session-end-hook",
                 "session_id": session_id,
             },
         )
 
-        # Update debounce state so the next turn doesn't re-save the same content
-        stop_state[session_id] = line_count
-        _save_stop_state(stop_state)
-
-        _log_hook_event("stop", f"saved session for project '{project_name}' (user_id={project_uid})")
+        _log_hook_event("session_end", f"saved session for project '{project_name}' (user_id={project_uid})")
         _output(_nonfatal())
 
     except Exception as exc:
-        logger.debug("stop_main failed", exc_info=True)
-        _log_hook_event("stop", f"FAILED: {exc}")
+        logger.debug("session_end_main failed", exc_info=True)
+        _log_hook_event("session_end", f"FAILED: {exc}")
         _output(_nonfatal())
 
 
@@ -394,7 +337,7 @@ def stop_main() -> None:
 # ---------------------------------------------------------------------------
 
 _HOOK_CONTEXT_CMD = "mem0-hook-context"
-_HOOK_STOP_CMD = "mem0-hook-stop"
+_HOOK_SESSION_END_CMD = "mem0-hook-session-end"
 
 
 def _has_hook(hooks_list: list, command: str) -> bool:
@@ -507,7 +450,7 @@ def install_main() -> None:
     hooks = settings["hooks"]
 
     # Migrate any legacy flat-format hooks to nested format
-    for event_key in ("SessionStart", "Stop"):
+    for event_key in ("SessionStart", "Stop", "SessionEnd"):
         if isinstance(hooks.get(event_key), list):
             hooks[event_key] = _migrate_legacy_hooks(hooks[event_key])
 
@@ -530,20 +473,20 @@ def install_main() -> None:
         })
         installed.append(f"SessionStart ({_HOOK_CONTEXT_CMD})")
 
-    # --- Stop hook ---
-    if not isinstance(hooks.get("Stop"), list):
-        hooks["Stop"] = []
-    if _has_hook(hooks["Stop"], _HOOK_STOP_CMD):
-        skipped.append(f"Stop ({_HOOK_STOP_CMD})")
+    # --- SessionEnd hook ---
+    if not isinstance(hooks.get("SessionEnd"), list):
+        hooks["SessionEnd"] = []
+    if _has_hook(hooks["SessionEnd"], _HOOK_SESSION_END_CMD):
+        skipped.append(f"SessionEnd ({_HOOK_SESSION_END_CMD})")
     else:
-        hooks["Stop"].append({
+        hooks["SessionEnd"].append({
             "hooks": [{
                 "type": "command",
-                "command": _HOOK_STOP_CMD,
+                "command": _HOOK_SESSION_END_CMD,
                 "timeout": 30000,
             }],
         })
-        installed.append(f"Stop ({_HOOK_STOP_CMD})")
+        installed.append(f"SessionEnd ({_HOOK_SESSION_END_CMD})")
 
     # Atomic write: temp file + rename avoids truncated settings on crash
     fd, tmp_path = tempfile.mkstemp(dir=str(settings_dir), suffix=".tmp")

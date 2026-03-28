@@ -339,16 +339,11 @@ class TestReadRecentMessages:
 
 
 # ---------------------------------------------------------------------------
-# 6.4  stop_main
+# 6.4  session_end_main
 # ---------------------------------------------------------------------------
 
 
-class TestStopMain:
-    @pytest.fixture(autouse=True)
-    def isolated_stop_state(self, tmp_path, monkeypatch):
-        """Point _STOP_STATE_FILE to a per-test temp file so no cross-test bleed."""
-        monkeypatch.setattr(hooks, "_STOP_STATE_FILE", tmp_path / "stop-state.json")
-
+class TestSessionEndMain:
     def _make_transcript(self, tmp_path, messages):
         """Write a JSONL transcript file and return its path."""
         p = tmp_path / "transcript.jsonl"
@@ -376,7 +371,7 @@ class TestStopMain:
 
         with patch.object(hooks, "_get_memory", return_value=mock_mem):
             result = _capture_output(
-                hooks.stop_main,
+                hooks.session_end_main,
                 self._make_stdin(transcript_path=transcript),
             )
 
@@ -384,7 +379,7 @@ class TestStopMain:
         mock_mem.add.assert_called_once()
         call_kwargs = mock_mem.add.call_args
         assert call_kwargs.kwargs["infer"] is True
-        assert call_kwargs.kwargs["metadata"]["source"] == "session-stop-hook"
+        assert call_kwargs.kwargs["metadata"]["source"] == "session-end-hook"
         assert call_kwargs.kwargs["metadata"]["session_id"] == "sess-1"
         # Summary includes both user and assistant exchanges
         summary = call_kwargs.kwargs["messages"][0]["content"]
@@ -403,14 +398,13 @@ class TestStopMain:
 
         with patch.object(hooks, "_get_memory", return_value=mock_mem):
             _capture_output(
-                hooks.stop_main,
+                hooks.session_end_main,
                 self._make_stdin(transcript_path=transcript),
             )
 
         mock_mem.add.assert_called_once()
         messages = mock_mem.add.call_args.kwargs["messages"]
         summary_text = messages[0]["content"]
-        # Summary should contain both user and assistant content from blocks
         assert "[User]:" in summary_text
         assert "[Assistant]:" in summary_text
         assert "caching layer" in summary_text.lower() or "Implement" in summary_text
@@ -426,7 +420,7 @@ class TestStopMain:
 
         with patch.object(hooks, "_get_memory", return_value=mock_mem):
             result = _capture_output(
-                hooks.stop_main,
+                hooks.session_end_main,
                 self._make_stdin(transcript_path=transcript),
             )
 
@@ -439,7 +433,7 @@ class TestStopMain:
 
         with patch.object(hooks, "_get_memory", return_value=mock_mem):
             result = _capture_output(
-                hooks.stop_main,
+                hooks.session_end_main,
                 self._make_stdin(transcript_path=""),
             )
 
@@ -452,35 +446,18 @@ class TestStopMain:
 
         with patch.object(hooks, "_get_memory", return_value=mock_mem):
             result = _capture_output(
-                hooks.stop_main,
+                hooks.session_end_main,
                 self._make_stdin(transcript_path="/tmp/nonexistent_transcript.jsonl"),
             )
 
         assert result["continue"] is True
         mock_mem.add.assert_not_called()
 
-    def test_stop_hook_active_guard(self):
-        """stop_hook_active=true exits immediately without reading transcript."""
-        mock_mem = MagicMock()
-
-        stdin_data = json.dumps({
-            "session_id": "sess-1",
-            "cwd": "/home/user/proj",
-            "transcript_path": "/some/path",
-            "stop_hook_active": True,
-        })
-
-        with patch.object(hooks, "_get_memory", return_value=mock_mem):
-            result = _capture_output(hooks.stop_main, stdin_data)
-
-        assert result["continue"] is True
-        mock_mem.add.assert_not_called()
-
     def test_exception_returns_nonfatal(self):
-        """Any exception during stop produces a non-fatal response."""
+        """Any exception during session end produces a non-fatal response."""
         with patch.object(hooks, "_get_memory", side_effect=RuntimeError("boom")):
             result = _capture_output(
-                hooks.stop_main,
+                hooks.session_end_main,
                 json.dumps({
                     "session_id": "s",
                     "cwd": "/x",
@@ -503,90 +480,15 @@ class TestStopMain:
 
         with patch.object(hooks, "_get_memory", return_value=mock_mem):
             _capture_output(
-                hooks.stop_main,
+                hooks.session_end_main,
                 self._make_stdin(transcript_path=transcript),
             )
 
         mock_mem.add.assert_called_once()
         summary = mock_mem.add.call_args.kwargs["messages"][0]["content"]
-        # Both exchanges should be present — not just the last one
         assert "JWT" in summary
         assert "refresh token" in summary.lower()
         assert "Redis" in summary
-
-    def test_debounce_skips_when_recently_saved(self, tmp_path):
-        """Subsequent stops with < _MIN_NEW_LINES new lines are skipped."""
-        transcript = self._make_transcript(tmp_path, [
-            {"role": "user", "content": "Please refactor the authentication module to use JWT tokens instead of sessions"},
-            {"role": "assistant", "content": "I've refactored the auth module. Replaced express-session with jsonwebtoken."},
-        ])
-        line_count = sum(1 for line in open(transcript) if line.strip())
-        # Pretend we already saved at this exact line count → delta = 0
-        state = {"sess-1": line_count}
-
-        mock_mem = MagicMock()
-        with (
-            patch.object(hooks, "_get_memory", return_value=mock_mem),
-            patch.object(hooks, "_load_stop_state", return_value=state),
-            patch.object(hooks, "_save_stop_state") as mock_save_state,
-        ):
-            result = _capture_output(
-                hooks.stop_main,
-                self._make_stdin(transcript_path=transcript),
-            )
-
-        assert result["continue"] is True
-        mock_mem.add.assert_not_called()
-        mock_save_state.assert_not_called()
-
-    def test_debounce_allows_save_after_threshold(self, tmp_path):
-        """Saves when _MIN_NEW_LINES new lines have accumulated since last save."""
-        lines = [
-            {"role": "user", "content": "Please refactor the authentication module to use JWT tokens instead of sessions"},
-            {"role": "assistant", "content": "I've refactored the auth module. Replaced express-session with jsonwebtoken."},
-        ]
-        transcript = self._make_transcript(tmp_path, lines)
-        line_count = sum(1 for line in open(transcript) if line.strip())
-        # Pretend we saved when transcript was _MIN_NEW_LINES shorter
-        state = {"sess-1": line_count - hooks._MIN_NEW_LINES}
-
-        mock_mem = MagicMock()
-        saved_state = {}
-        with (
-            patch.object(hooks, "_get_memory", return_value=mock_mem),
-            patch.object(hooks, "_load_stop_state", return_value=state),
-            patch.object(hooks, "_save_stop_state", side_effect=lambda s: saved_state.update(s)),
-        ):
-            result = _capture_output(
-                hooks.stop_main,
-                self._make_stdin(transcript_path=transcript),
-            )
-
-        assert result["continue"] is True
-        mock_mem.add.assert_called_once()
-        # State should be updated to current line count
-        assert saved_state.get("sess-1") == line_count
-
-    def test_debounce_no_effect_on_first_save(self, tmp_path):
-        """First save for a session (no prior state) is never debounced."""
-        transcript = self._make_transcript(tmp_path, [
-            {"role": "user", "content": "Please refactor the authentication module to use JWT tokens instead of sessions"},
-            {"role": "assistant", "content": "I've refactored the auth module. Replaced express-session with jsonwebtoken."},
-        ])
-
-        mock_mem = MagicMock()
-        with (
-            patch.object(hooks, "_get_memory", return_value=mock_mem),
-            patch.object(hooks, "_load_stop_state", return_value={}),
-            patch.object(hooks, "_save_stop_state"),
-        ):
-            result = _capture_output(
-                hooks.stop_main,
-                self._make_stdin(transcript_path=transcript),
-            )
-
-        assert result["continue"] is True
-        mock_mem.add.assert_called_once()
 
     def test_mem_add_raises_returns_nonfatal(self, tmp_path):
         """Exception during mem.add() is caught and produces non-fatal response."""
@@ -600,7 +502,7 @@ class TestStopMain:
 
         with patch.object(hooks, "_get_memory", return_value=mock_mem):
             result = _capture_output(
-                hooks.stop_main,
+                hooks.session_end_main,
                 self._make_stdin(transcript_path=transcript),
             )
 
@@ -637,12 +539,12 @@ class TestInstallMain:
         assert ss_group["hooks"][0]["command"] == "mem0-hook-context"
         assert ss_group["hooks"][0]["timeout"] == 15000
 
-        # Stop: matcher group with nested hooks array
-        assert len(settings["hooks"]["Stop"]) == 1
-        stop_group = settings["hooks"]["Stop"][0]
+        # SessionEnd: matcher group with nested hooks array
+        assert len(settings["hooks"]["SessionEnd"]) == 1
+        stop_group = settings["hooks"]["SessionEnd"][0]
         assert len(stop_group["hooks"]) == 1
         assert stop_group["hooks"][0]["type"] == "command"
-        assert stop_group["hooks"][0]["command"] == "mem0-hook-stop"
+        assert stop_group["hooks"][0]["command"] == "mem0-hook-session-end"
         assert stop_group["hooks"][0]["timeout"] == 30000
 
     def test_idempotent_reinstall(self, tmp_path, capsys):
@@ -658,7 +560,7 @@ class TestInstallMain:
 
         settings = json.loads((project_dir / ".claude" / "settings.json").read_text())
         assert len(settings["hooks"]["SessionStart"]) == 1
-        assert len(settings["hooks"]["Stop"]) == 1
+        assert len(settings["hooks"]["SessionEnd"]) == 1
 
         captured = capsys.readouterr()
         assert "Already installed" in captured.out
@@ -697,7 +599,7 @@ class TestInstallMain:
 
         settings = json.loads(settings_path.read_text())
         assert "SessionStart" in settings["hooks"]
-        assert "Stop" in settings["hooks"]
+        assert "SessionEnd" in settings["hooks"]
 
     def test_default_project_dir_uses_cwd(self, tmp_path, monkeypatch):
         """Without --project-dir, install uses CWD."""
@@ -735,7 +637,7 @@ class TestInstallMain:
         existing = {
             "hooks": {
                 "SessionStart": [{"hooks": [{"type": "command", "command": "other-hook", "timeout": 5000}]}],
-                "Stop": [{"hooks": [{"type": "command", "command": "another-stop-hook", "timeout": 10000}]}],
+                "SessionEnd": [{"hooks": [{"type": "command", "command": "another-stop-hook", "timeout": 10000}]}],
             }
         }
         (claude_dir / "settings.json").write_text(json.dumps(existing))
@@ -746,7 +648,7 @@ class TestInstallMain:
         settings = json.loads((claude_dir / "settings.json").read_text())
         # Both the original and new matcher groups should be present
         assert len(settings["hooks"]["SessionStart"]) == 2
-        assert len(settings["hooks"]["Stop"]) == 2
+        assert len(settings["hooks"]["SessionEnd"]) == 2
         # Extract commands from nested hooks arrays
         commands = [
             handler["command"]
@@ -766,7 +668,7 @@ class TestInstallMain:
 
         captured = capsys.readouterr()
         assert "Installed: SessionStart (mem0-hook-context)" in captured.out
-        assert "Installed: Stop (mem0-hook-stop)" in captured.out
+        assert "Installed: SessionEnd (mem0-hook-session-end)" in captured.out
         assert "Settings:" in captured.out
 
     def test_malformed_hooks_structure_is_repaired(self, tmp_path):
@@ -785,7 +687,7 @@ class TestInstallMain:
         settings = json.loads((claude_dir / "settings.json").read_text())
         assert isinstance(settings["hooks"], dict)
         assert len(settings["hooks"]["SessionStart"]) == 1
-        assert len(settings["hooks"]["Stop"]) == 1
+        assert len(settings["hooks"]["SessionEnd"]) == 1
 
     def test_nonexistent_project_dir_exits_with_error(self, tmp_path, capsys):
         """--project-dir pointing to nonexistent path exits with error."""
@@ -809,7 +711,7 @@ class TestInstallMain:
         existing = {
             "hooks": {
                 "SessionStart": [{"command": "mem0-hook-context", "matcher": "startup|compact", "timeout": 15000}],
-                "Stop": [{"command": "mem0-hook-stop", "timeout": 30000}],
+                "SessionEnd": [{"command": "mem0-hook-session-end", "timeout": 30000}],
             }
         }
         (claude_dir / "settings.json").write_text(json.dumps(existing))
@@ -821,7 +723,7 @@ class TestInstallMain:
 
         # Should have exactly 1 entry per event (migrated, not duplicated)
         assert len(settings["hooks"]["SessionStart"]) == 1
-        assert len(settings["hooks"]["Stop"]) == 1
+        assert len(settings["hooks"]["SessionEnd"]) == 1
 
         # Migrated to nested format
         ss = settings["hooks"]["SessionStart"][0]
@@ -830,9 +732,9 @@ class TestInstallMain:
         assert ss["hooks"][0]["command"] == "mem0-hook-context"
         assert ss["hooks"][0]["timeout"] == 15000
 
-        stop = settings["hooks"]["Stop"][0]
+        stop = settings["hooks"]["SessionEnd"][0]
         assert stop["hooks"][0]["type"] == "command"
-        assert stop["hooks"][0]["command"] == "mem0-hook-stop"
+        assert stop["hooks"][0]["command"] == "mem0-hook-session-end"
         assert stop["hooks"][0]["timeout"] == 30000
 
         captured = capsys.readouterr()
@@ -868,6 +770,6 @@ class TestInstallMain:
         assert "other-hook" in commands
         assert "mem0-hook-context" in commands
 
-        # Stop hook auto-installed since it wasn't in the original settings
-        assert len(settings["hooks"]["Stop"]) == 1
-        assert settings["hooks"]["Stop"][0]["hooks"][0]["command"] == "mem0-hook-stop"
+        # SessionEnd hook auto-installed since it wasn't in the original settings
+        assert len(settings["hooks"]["SessionEnd"]) == 1
+        assert settings["hooks"]["SessionEnd"][0]["hooks"][0]["command"] == "mem0-hook-session-end"

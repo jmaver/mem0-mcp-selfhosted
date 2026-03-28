@@ -22,7 +22,7 @@ dependencies = [
 [project.scripts]
 mem0-mcp-selfhosted = "mem0_mcp_selfhosted:main"
 mem0-hook-context = "mem0_mcp_selfhosted.hooks:context_main"
-mem0-hook-stop = "mem0_mcp_selfhosted.hooks:stop_main"
+mem0-hook-session-end = "mem0_mcp_selfhosted.hooks:session_end_main"
 mem0-install-hooks = "mem0_mcp_selfhosted.hooks:install_main"
 
 [tool.hatch.build.targets.wheel]

@@ -1,6 +1,16 @@
 # mem0-mcp-selfhosted
 
-***Note:*** This fork was created so that I could add lm studio support, aside from that it is identical. 
+***Note:*** This is a fork of [elvismdev/mem0-mcp-selfhosted](https://github.com/elvismdev/mem0-mcp-selfhosted).
+
+**Changes from upstream:**
+- **Claude Code session hooks** — `SessionStart` injects relevant memories as context on startup; `SessionEnd` saves a session summary to mem0 on exit (automatic, no manual tool calls needed)
+- **Project-scoped memory isolation** — memories are namespaced per working directory via `user_id` encoding; hooks auto-scope by CWD
+- **OAT token self-refresh** — proactively refreshes Claude Code's OAuth token before expiry so long-running sessions survive token rotation
+- **Custom Anthropic LLM provider** — handles OAT authentication headers, structured JSON outputs via `output_config`, and tool-call parsing inside `mem0ai`
+- **Split-model graph router** (`gemini_split`) — routes entity extraction to Gemini (85.4% accuracy, cheaper) and contradiction detection to Claude (100% accuracy)
+- **Neo4j relationship sanitizer fix** — monkey-patches `mem0ai`'s `sanitize_relationship_for_cypher()` to handle hyphens and leading-digit edge cases
+- **`safe_bulk_delete()` workaround** — explicitly cleans Neo4j nodes after `memory.delete()`, working around mem0ai bug #3245
+- **LM Studio / local Ollama support** — fully local setup with no cloud dependencies
 
 <a href="https://glama.ai/mcp/servers/elvismdev/mem0-mcp-selfhosted"><img width="380" height="200" src="https://glama.ai/mcp/servers/elvismdev/mem0-mcp-selfhosted/badge?v=1" alt="mem0-mcp-selfhosted MCP server" /></a>
 
@@ -100,7 +110,7 @@ Session hooks automate memory at session boundaries, injecting memories on start
 | Hook | Event | What it does |
 |------|-------|--------------|
 | `mem0-hook-context` | SessionStart (`startup`, `compact`) | Searches mem0 for project-relevant memories and injects them as `additionalContext` |
-| `mem0-hook-stop` | Stop | Reads the last ~3 user/assistant exchanges from the transcript and saves a summary to mem0 via `infer=True` |
+| `mem0-hook-session-end` | SessionEnd | Reads the last ~10 user/assistant exchanges from the transcript and saves a summary to mem0 via `infer=True` |
 
 Both hooks are non-fatal, if mem0 is unreachable or any error occurs, Claude Code continues normally.
 
@@ -124,14 +134,14 @@ This adds the hook entries to `.claude/settings.json`. The installer is idempote
 
 **On session start**, the context hook searches mem0 with two queries (project architecture + recent session summaries). Each query runs two searches — project-scoped and global — and results are deduplicated by memory ID and grouped under `## Project: <name>` and `## Global` headings. These are injected via the hook's `additionalContext` response field.
 
-**On session stop**, the stop hook reads the JSONL transcript, extracts the last ~10 user/assistant messages (a sliding window via bounded deque), builds a summary prompt, and calls `memory.add(infer=True)` to extract atomic facts. Session summaries are saved as project-scoped memories. Graph is force-disabled in hooks to stay within the 15s/60s timeout budgets.
+**On session end**, the SessionEnd hook fires once when the session terminates. It reads the JSONL transcript, extracts the last ~10 user/assistant messages (a sliding window via bounded deque), builds a summary prompt, and calls `memory.add(infer=True)` to extract atomic facts. Session summaries are saved as project-scoped memories. Graph is force-disabled in hooks to stay within the 60s timeout budget.
 
 ### Entry points
 
 | Command | Function | Registered in `pyproject.toml` |
 |---------|----------|-------------------------------|
 | `mem0-hook-context` | `hooks:context_main` | SessionStart hook |
-| `mem0-hook-stop` | `hooks:stop_main` | Stop hook |
+| `mem0-hook-session-end` | `hooks:session_end_main` | SessionEnd hook |
 | `mem0-install-hooks` | `hooks:install_main` | CLI installer |
 
 ### Hooks + CLAUDE.md
@@ -140,7 +150,7 @@ Hooks and CLAUDE.md are complementary layers that work best together:
 
 | Layer | Role | When |
 |-------|------|------|
-| **Hooks** | Automated data flow, injects stored memories on startup, saves session summaries on exit | Session boundaries (start/stop) |
+| **Hooks** | Automated data flow, injects stored memories on startup, saves session summaries on exit | Session boundaries (SessionStart/SessionEnd) |
 | **CLAUDE.md** | Behavioral instructions, tells Claude to actively search and save memories during the session | Throughout the session |
 
 Hooks alone give you passive recall (memories appear at startup) and passive saving (summaries saved at exit). CLAUDE.md instructions add active mid-session behavior, Claude searches for relevant memories when encountering new topics, and saves important discoveries immediately rather than waiting for session end.
@@ -333,10 +343,10 @@ Claude Code
   |
   └── Session Hooks (subprocess, not MCP)
         |
-        └── hooks.py             ← Cross-session memory (SessionStart + Stop hooks)
-              ├── context_main()   → Injects memories as additionalContext on startup/compact
-              ├── stop_main()      → Saves session summary to mem0 on exit
-              └── install_main()   → CLI to patch .claude/settings.json
+        └── hooks.py             ← Cross-session memory (SessionStart + SessionEnd hooks)
+              ├── context_main()       → Injects memories as additionalContext on startup/compact
+              ├── session_end_main()   → Saves session summary to mem0 on exit
+              └── install_main()       → CLI to patch .claude/settings.json
 ```
 
 ## Graph Memory & Quota

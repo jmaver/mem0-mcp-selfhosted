@@ -77,6 +77,8 @@ def _get_memory():
 
 
 _HOOK_LOG = Path(tempfile.gettempdir()) / "mem0-hook-context.log"
+_STOP_STATE_FILE = Path(tempfile.gettempdir()) / "mem0-stop-state.json"
+_MIN_NEW_LINES = 6  # minimum new transcript lines required between saves for the same session
 
 
 def _log_hook_event(hook: str, msg: str) -> None:
@@ -89,6 +91,37 @@ def _log_hook_event(hook: str, msg: str) -> None:
             f.write(f"{ts} [{hook}] {msg}\n")
     except OSError:
         pass
+
+
+def _load_stop_state() -> dict:
+    """Load per-session save-state from temp file (best-effort)."""
+    try:
+        if _STOP_STATE_FILE.exists():
+            return json.loads(_STOP_STATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {}
+
+
+def _save_stop_state(state: dict) -> None:
+    """Persist per-session save-state to temp file (best-effort)."""
+    try:
+        _STOP_STATE_FILE.write_text(json.dumps(state), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _count_transcript_lines(transcript_path: str) -> int:
+    """Count non-empty lines in transcript without full JSON parsing."""
+    try:
+        count = 0
+        with open(transcript_path, encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    count += 1
+        return count
+    except OSError:
+        return 0
 
 
 def _output(data: dict) -> None:
@@ -294,6 +327,20 @@ def stop_main() -> None:
             _output(_nonfatal())
             return
 
+        # Debounce: the Stop hook fires after *every* assistant turn, not only at
+        # true session end.  For sessions we've already saved, require _MIN_NEW_LINES
+        # of new transcript content before saving again.  First save is always allowed.
+        line_count = _count_transcript_lines(transcript_path)
+        stop_state = _load_stop_state()
+        last_saved_lines = stop_state.get(session_id, 0)
+        if last_saved_lines > 0 and (line_count - last_saved_lines) < _MIN_NEW_LINES:
+            _log_hook_event(
+                "stop",
+                f"debounce: only {line_count - last_saved_lines} new lines since last save — skipping",
+            )
+            _output(_nonfatal())
+            return
+
         # Build summary prompt with recent exchanges
         exchanges = []
         for role, content in recent:
@@ -328,6 +375,10 @@ def stop_main() -> None:
                 "session_id": session_id,
             },
         )
+
+        # Update debounce state so the next turn doesn't re-save the same content
+        stop_state[session_id] = line_count
+        _save_stop_state(stop_state)
 
         _log_hook_event("stop", f"saved session for project '{project_name}' (user_id={project_uid})")
         _output(_nonfatal())

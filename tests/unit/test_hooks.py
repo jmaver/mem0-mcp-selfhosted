@@ -344,6 +344,11 @@ class TestReadRecentMessages:
 
 
 class TestStopMain:
+    @pytest.fixture(autouse=True)
+    def isolated_stop_state(self, tmp_path, monkeypatch):
+        """Point _STOP_STATE_FILE to a per-test temp file so no cross-test bleed."""
+        monkeypatch.setattr(hooks, "_STOP_STATE_FILE", tmp_path / "stop-state.json")
+
     def _make_transcript(self, tmp_path, messages):
         """Write a JSONL transcript file and return its path."""
         p = tmp_path / "transcript.jsonl"
@@ -508,6 +513,80 @@ class TestStopMain:
         assert "JWT" in summary
         assert "refresh token" in summary.lower()
         assert "Redis" in summary
+
+    def test_debounce_skips_when_recently_saved(self, tmp_path):
+        """Subsequent stops with < _MIN_NEW_LINES new lines are skipped."""
+        transcript = self._make_transcript(tmp_path, [
+            {"role": "user", "content": "Please refactor the authentication module to use JWT tokens instead of sessions"},
+            {"role": "assistant", "content": "I've refactored the auth module. Replaced express-session with jsonwebtoken."},
+        ])
+        line_count = sum(1 for line in open(transcript) if line.strip())
+        # Pretend we already saved at this exact line count → delta = 0
+        state = {"sess-1": line_count}
+
+        mock_mem = MagicMock()
+        with (
+            patch.object(hooks, "_get_memory", return_value=mock_mem),
+            patch.object(hooks, "_load_stop_state", return_value=state),
+            patch.object(hooks, "_save_stop_state") as mock_save_state,
+        ):
+            result = _capture_output(
+                hooks.stop_main,
+                self._make_stdin(transcript_path=transcript),
+            )
+
+        assert result["continue"] is True
+        mock_mem.add.assert_not_called()
+        mock_save_state.assert_not_called()
+
+    def test_debounce_allows_save_after_threshold(self, tmp_path):
+        """Saves when _MIN_NEW_LINES new lines have accumulated since last save."""
+        lines = [
+            {"role": "user", "content": "Please refactor the authentication module to use JWT tokens instead of sessions"},
+            {"role": "assistant", "content": "I've refactored the auth module. Replaced express-session with jsonwebtoken."},
+        ]
+        transcript = self._make_transcript(tmp_path, lines)
+        line_count = sum(1 for line in open(transcript) if line.strip())
+        # Pretend we saved when transcript was _MIN_NEW_LINES shorter
+        state = {"sess-1": line_count - hooks._MIN_NEW_LINES}
+
+        mock_mem = MagicMock()
+        saved_state = {}
+        with (
+            patch.object(hooks, "_get_memory", return_value=mock_mem),
+            patch.object(hooks, "_load_stop_state", return_value=state),
+            patch.object(hooks, "_save_stop_state", side_effect=lambda s: saved_state.update(s)),
+        ):
+            result = _capture_output(
+                hooks.stop_main,
+                self._make_stdin(transcript_path=transcript),
+            )
+
+        assert result["continue"] is True
+        mock_mem.add.assert_called_once()
+        # State should be updated to current line count
+        assert saved_state.get("sess-1") == line_count
+
+    def test_debounce_no_effect_on_first_save(self, tmp_path):
+        """First save for a session (no prior state) is never debounced."""
+        transcript = self._make_transcript(tmp_path, [
+            {"role": "user", "content": "Please refactor the authentication module to use JWT tokens instead of sessions"},
+            {"role": "assistant", "content": "I've refactored the auth module. Replaced express-session with jsonwebtoken."},
+        ])
+
+        mock_mem = MagicMock()
+        with (
+            patch.object(hooks, "_get_memory", return_value=mock_mem),
+            patch.object(hooks, "_load_stop_state", return_value={}),
+            patch.object(hooks, "_save_stop_state"),
+        ):
+            result = _capture_output(
+                hooks.stop_main,
+                self._make_stdin(transcript_path=transcript),
+            )
+
+        assert result["continue"] is True
+        mock_mem.add.assert_called_once()
 
     def test_mem_add_raises_returns_nonfatal(self, tmp_path):
         """Exception during mem.add() is caught and produces non-fatal response."""

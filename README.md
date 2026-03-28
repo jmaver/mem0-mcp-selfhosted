@@ -3,14 +3,9 @@
 ***Note:*** This is a fork of [elvismdev/mem0-mcp-selfhosted](https://github.com/elvismdev/mem0-mcp-selfhosted).
 
 **Changes from upstream:**
+- **LM Studio / local Ollama support** — fully local setup with no cloud dependencies
 - **Claude Code session hooks** — `SessionStart` injects relevant memories as context on startup; `SessionEnd` saves a session summary to mem0 on exit (automatic, no manual tool calls needed)
 - **Project-scoped memory isolation** — memories are namespaced per working directory via `user_id` encoding; hooks auto-scope by CWD
-- **OAT token self-refresh** — proactively refreshes Claude Code's OAuth token before expiry so long-running sessions survive token rotation
-- **Custom Anthropic LLM provider** — handles OAT authentication headers, structured JSON outputs via `output_config`, and tool-call parsing inside `mem0ai`
-- **Split-model graph router** (`gemini_split`) — routes entity extraction to Gemini (85.4% accuracy, cheaper) and contradiction detection to Claude (100% accuracy)
-- **Neo4j relationship sanitizer fix** — monkey-patches `mem0ai`'s `sanitize_relationship_for_cypher()` to handle hyphens and leading-digit edge cases
-- **`safe_bulk_delete()` workaround** — explicitly cleans Neo4j nodes after `memory.delete()`, working around mem0ai bug #3245
-- **LM Studio / local Ollama support** — fully local setup with no cloud dependencies
 
 <a href="https://glama.ai/mcp/servers/elvismdev/mem0-mcp-selfhosted"><img width="380" height="200" src="https://glama.ai/mcp/servers/elvismdev/mem0-mcp-selfhosted/badge?v=1" alt="mem0-mcp-selfhosted MCP server" /></a>
 

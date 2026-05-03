@@ -45,18 +45,12 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo]]:
     _provider_default = env("MEM0_PROVIDER", "anthropic")
     _supported_llm_providers = ("anthropic", "ollama", "openai")
     if _provider_default not in _supported_llm_providers:
-        raise ValueError(
-            f"Unsupported MEM0_PROVIDER={_provider_default!r}. "
-            f"Supported: {list(_supported_llm_providers)}"
-        )
+        raise ValueError(f"Unsupported MEM0_PROVIDER={_provider_default!r}. Supported: {list(_supported_llm_providers)}")
 
     # --- LLM ---
     llm_provider = env("MEM0_LLM_PROVIDER", _provider_default)
     if llm_provider not in _supported_llm_providers:
-        raise ValueError(
-            f"Unsupported MEM0_LLM_PROVIDER={llm_provider!r}. "
-            f"Supported: {list(_supported_llm_providers)}"
-        )
+        raise ValueError(f"Unsupported MEM0_LLM_PROVIDER={llm_provider!r}. Supported: {list(_supported_llm_providers)}")
 
     _llm_model_defaults = {"anthropic": "claude-opus-4-6", "ollama": "qwen3:14b", "openai": ""}
     llm_model = env("MEM0_LLM_MODEL", _llm_model_defaults[llm_provider])
@@ -82,10 +76,7 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo]]:
     _supported_embed_providers = ("ollama", "openai")
     embed_provider = env("MEM0_EMBED_PROVIDER", "ollama")
     if embed_provider not in _supported_embed_providers:
-        raise ValueError(
-            f"Unsupported MEM0_EMBED_PROVIDER={embed_provider!r}. "
-            f"Supported: {list(_supported_embed_providers)}"
-        )
+        raise ValueError(f"Unsupported MEM0_EMBED_PROVIDER={embed_provider!r}. Supported: {list(_supported_embed_providers)}")
     _embed_model_defaults = {"ollama": "bge-m3", "openai": "text-embedding-3-small"}
     _embed_dims_defaults = {"ollama": 1024, "openai": 1536}
     embed_model = env("MEM0_EMBED_MODEL", _embed_model_defaults[embed_provider])
@@ -169,15 +160,19 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo]]:
     # mem0ai's built-in OpenAILLM to strip unsupported json_object response_format
     # (LM Studio / vLLM / llama.cpp only accept json_schema or text).
     if llm_provider == "openai":
-        providers_info.append({
-            "name": "openai",
-            "class_path": "mem0_mcp_selfhosted.llm_openai_compat.OpenAICompatLLM",
-        })
+        providers_info.append(
+            {
+                "name": "openai",
+                "class_path": "mem0_mcp_selfhosted.llm_openai_compat.OpenAICompatLLM",
+            }
+        )
 
     if llm_provider == "anthropic":
-        providers_info.append({
-            "name": "anthropic",
-            "class_path": "mem0_mcp_selfhosted.llm_anthropic.AnthropicOATLLM",
-        })
+        providers_info.append(
+            {
+                "name": "anthropic",
+                "class_path": "mem0_mcp_selfhosted.llm_anthropic.AnthropicOATLLM",
+            }
+        )
 
     return config_dict, providers_info

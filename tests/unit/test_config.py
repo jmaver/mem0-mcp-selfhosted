@@ -19,6 +19,7 @@ class TestBuildConfig:
                     patched_env.pop(k, None)
             with patch("mem0_mcp_selfhosted.config.resolve_token", return_value="sk-test-token"):
                 from mem0_mcp_selfhosted.config import build_config
+
                 config_dict, providers_info = build_config()
                 return config_dict, providers_info
 
@@ -112,6 +113,7 @@ class TestBuildConfig:
                     patched_env.pop(k, None)
             with patch("mem0_mcp_selfhosted.config.resolve_token", return_value="sk-test"):
                 from mem0_mcp_selfhosted.config import build_config
+
                 with pytest.raises(ValueError, match="Unsupported MEM0_LLM_PROVIDER='gemini'"):
                     build_config()
 
@@ -183,6 +185,7 @@ class TestBuildConfig:
         assert "timeout" not in vc
         # A pre-configured QdrantClient should be in the "client" field
         from qdrant_client import QdrantClient
+
         assert isinstance(vc["client"], QdrantClient)
 
     def test_qdrant_timeout_absent_when_not_set(self):
@@ -227,5 +230,6 @@ class TestBuildConfig:
                     patched_env.pop(k, None)
             with patch("mem0_mcp_selfhosted.config.resolve_token", return_value="sk-test"):
                 from mem0_mcp_selfhosted.config import build_config
+
                 with pytest.raises(ValueError, match="Unsupported MEM0_PROVIDER"):
                     build_config()

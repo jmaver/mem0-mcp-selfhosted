@@ -42,9 +42,7 @@ class TestProviderMatrix:
         ids=[m[1] for m in MATRIX],
     )
     @patch("mem0_mcp_selfhosted.config.resolve_token", return_value="sk-ant-api-fake")
-    def test_provider_combination(
-        self, mock_token, llm_provider, test_id, monkeypatch
-    ):
+    def test_provider_combination(self, mock_token, llm_provider, test_id, monkeypatch):
         env = _make_env(llm_provider)
         for k, v in env.items():
             monkeypatch.setenv(k, v)

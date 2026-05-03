@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
-import pytest
 
 from mem0_mcp_selfhosted.helpers import (
     _mem0_call,
@@ -25,9 +24,13 @@ class TestMem0Call:
 
     def test_memory_error_caught(self):
         """MemoryError subclass returns structured error JSON."""
-        # Create a mock MemoryError-like exception
+
+        # Create a mock MemoryError-like exception. Declare the metadata
+        # attributes on the class so Pyright knows they exist.
         class FakeMemoryError(Exception):
-            pass
+            error_code: str = ""
+            details: str = ""
+            suggestion: str = ""
 
         FakeMemoryError.__name__ = "MemoryError"
 
@@ -46,6 +49,7 @@ class TestMem0Call:
 
     def test_generic_exception_caught(self):
         """Generic Exception returns type name and detail."""
+
         def _raise():
             raise ValueError("bad input")
 

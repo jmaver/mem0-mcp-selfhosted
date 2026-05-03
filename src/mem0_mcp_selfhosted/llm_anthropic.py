@@ -81,6 +81,20 @@ MEMORY_UPDATE_SCHEMA = {
 _STRUCTURED_OUTPUT_PREFIXES = ("claude-opus-4", "claude-sonnet-4", "claude-haiku-4")
 
 
+def _extract_text_block(response: anthropic.types.Message) -> str | None:
+    """Return the first content block's text, or None if missing/non-text.
+
+    Anthropic's ``Message.content`` is a list of union-typed blocks; only some
+    variants (``TextBlock``, ``ThinkingBlock``) carry a ``.text`` field. Duck-
+    type the lookup so the function tolerates both real SDK objects and test
+    mocks (which set ``.text`` directly on a ``MagicMock``).
+    """
+    if not response.content:
+        return None
+    text = getattr(response.content[0], "text", None)
+    return text if isinstance(text, str) else None
+
+
 def extract_json(text: str) -> str:
     """Extract JSON from potentially wrapped text.
 
@@ -152,9 +166,7 @@ class AnthropicOATLLM(LLMBase):
         # In-memory OAuth state for OAT token self-refresh
         self._refresh_token: str | None = None
         self._expires_at: int | None = None
-        self._refresh_threshold: int = int(
-            env("MEM0_OAT_REFRESH_THRESHOLD_SECONDS", "1800")
-        )
+        self._refresh_threshold: int = int(env("MEM0_OAT_REFRESH_THRESHOLD_SECONDS", "1800"))
 
         if token and is_oat_token(token):
             creds = read_credentials_full()
@@ -286,7 +298,7 @@ class AnthropicOATLLM(LLMBase):
         try:
             response = self._call_with_transient_retry(params)
         except anthropic.AuthenticationError as auth_err:
-            if not is_oat_token(self._current_token):
+            if not self._current_token or not is_oat_token(self._current_token):
                 raise
 
             # Step 1: Piggyback on credentials file
@@ -314,9 +326,7 @@ class AnthropicOATLLM(LLMBase):
                         raise auth_err
 
         if response.stop_reason == "max_tokens":
-            logger.warning(
-                "[mem0] Anthropic response truncated for model %s", self.config.model
-            )
+            logger.warning("[mem0] Anthropic response truncated for model %s", self.config.model)
 
         return response
 
@@ -334,14 +344,20 @@ class AnthropicOATLLM(LLMBase):
                     delay = self._BACKOFF_SECONDS[attempt]
                     logger.warning(
                         "[mem0] Anthropic %d error (attempt %d/%d), retrying in %ds",
-                        exc.status_code, attempt + 1, 1 + self._MAX_RETRIES, delay,
+                        exc.status_code,
+                        attempt + 1,
+                        1 + self._MAX_RETRIES,
+                        delay,
                     )
                     time.sleep(delay)
         raise last_exc  # type: ignore[misc]
 
     def _supports_structured_output(self) -> bool:
         """Check if the configured model supports structured outputs."""
-        return self.config.model.startswith(_STRUCTURED_OUTPUT_PREFIXES)
+        # BaseLlmConfig types `model` loosely (str | None | dict); only str values
+        # have a meaningful prefix.
+        model = self.config.model
+        return isinstance(model, str) and model.startswith(_STRUCTURED_OUTPUT_PREFIXES)
 
     def _select_schema(self, messages: list[dict]) -> dict:
         """Select structured output schema based on call type.
@@ -368,17 +384,19 @@ class AnthropicOATLLM(LLMBase):
             if block.type == "text":
                 text_parts.append(block.text)
             elif block.type == "tool_use":
-                tool_calls.append({
-                    "name": block.name,
-                    "arguments": block.input,  # Already a dict, no JSON parsing needed
-                })
+                tool_calls.append(
+                    {
+                        "name": block.name,
+                        "arguments": block.input,  # Already a dict, no JSON parsing needed
+                    }
+                )
 
         return {
             "content": "\n".join(text_parts),
             "tool_calls": tool_calls,
         }
 
-    def generate_response(
+    def generate_response(  # type: ignore[override]
         self,
         messages: list[dict],
         response_format: dict | None = None,
@@ -419,11 +437,13 @@ class AnthropicOATLLM(LLMBase):
             for tool in tools:
                 if "function" in tool:
                     fn = tool["function"]
-                    anthropic_tools.append({
-                        "name": fn["name"],
-                        "description": fn.get("description", ""),
-                        "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
-                    })
+                    anthropic_tools.append(
+                        {
+                            "name": fn["name"],
+                            "description": fn.get("description", ""),
+                            "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
+                        }
+                    )
                 else:
                     anthropic_tools.append(tool)
             params["tools"] = anthropic_tools
@@ -457,15 +477,16 @@ class AnthropicOATLLM(LLMBase):
             # else: no output_config — rely on extractJson fallback
 
             response = self._call_api(params)
-            if not response.content:
-                logger.warning("Anthropic API returned empty content (structured output path)")
+            text = _extract_text_block(response)
+            if text is None:
+                logger.warning("Anthropic API returned empty or non-text content (structured output path)")
                 return ""
-            text = response.content[0].text
             return extract_json(text)
 
         # Plain text response (no tools, no response_format)
         response = self._call_api(params)
-        if not response.content:
-            logger.warning("Anthropic API returned empty content (plain text path)")
+        text = _extract_text_block(response)
+        if text is None:
+            logger.warning("Anthropic API returned empty or non-text content (plain text path)")
             return ""
-        return response.content[0].text
+        return text

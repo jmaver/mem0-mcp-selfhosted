@@ -180,6 +180,7 @@ def context_main() -> None:
 
     except Exception as exc:
         import traceback
+
         _log_hook_event("context", f"FAILED: {exc}\n{traceback.format_exc()}")
         logger.debug("context_main failed", exc_info=True)
         _output(_nonfatal())
@@ -199,11 +200,7 @@ def _extract_content(content) -> str:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        parts = [
-            p.get("text", "")
-            for p in content
-            if isinstance(p, dict) and p.get("type") == "text"
-        ]
+        parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
         return " ".join(parts)
     return ""
 
@@ -285,9 +282,7 @@ def session_end_main() -> None:
             exchanges.append(f"[{label}]: {content}")
 
         summary = (
-            f"Session summary for project '{project_name}':\n\n"
-            + "\n\n".join(exchanges)
-            + "\n\n"
+            f"Session summary for project '{project_name}':\n\n" + "\n\n".join(exchanges) + "\n\n"
             "Extract key decisions, solutions found, patterns discovered, "
             "configuration changes, and important context for future sessions."
         )
@@ -453,14 +448,18 @@ def install_main() -> None:
     if _has_hook(hooks["SessionStart"], _HOOK_CONTEXT_CMD):
         skipped.append(f"SessionStart ({_HOOK_CONTEXT_CMD})")
     else:
-        hooks["SessionStart"].append({
-            "matcher": "startup|compact",
-            "hooks": [{
-                "type": "command",
-                "command": _HOOK_CONTEXT_CMD,
-                "timeout": 15000,
-            }],
-        })
+        hooks["SessionStart"].append(
+            {
+                "matcher": "startup|compact",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": _HOOK_CONTEXT_CMD,
+                        "timeout": 15000,
+                    }
+                ],
+            }
+        )
         installed.append(f"SessionStart ({_HOOK_CONTEXT_CMD})")
 
     # --- SessionEnd hook ---
@@ -469,13 +468,17 @@ def install_main() -> None:
     if _has_hook(hooks["SessionEnd"], _HOOK_SESSION_END_CMD):
         skipped.append(f"SessionEnd ({_HOOK_SESSION_END_CMD})")
     else:
-        hooks["SessionEnd"].append({
-            "hooks": [{
-                "type": "command",
-                "command": _HOOK_SESSION_END_CMD,
-                "timeout": 30000,
-            }],
-        })
+        hooks["SessionEnd"].append(
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": _HOOK_SESSION_END_CMD,
+                        "timeout": 30000,
+                    }
+                ],
+            }
+        )
         installed.append(f"SessionEnd ({_HOOK_SESSION_END_CMD})")
 
     # Atomic write: temp file + rename avoids truncated settings on crash

@@ -11,7 +11,6 @@ Requires: Qdrant + Ollama (embedder) + LLM provider (Anthropic or Ollama).
 from __future__ import annotations
 
 import json
-import os
 import time
 from io import StringIO
 from unittest.mock import patch
@@ -102,11 +101,13 @@ class TestContextMainIntegration:
         user_id, _ = seeded_memory
         monkeypatch.setenv("MEM0_USER_ID", user_id)
 
-        stdin_data = json.dumps({
-            "session_id": "inttest-ctx",
-            "cwd": "/home/user/testproject",
-            "hook_event_name": "startup",
-        })
+        stdin_data = json.dumps(
+            {
+                "session_id": "inttest-ctx",
+                "cwd": "/home/user/testproject",
+                "hook_event_name": "startup",
+            }
+        )
 
         # Override _get_memory to use our live instance
         with patch.object(hooks, "_get_memory", return_value=hook_memory):
@@ -117,10 +118,7 @@ class TestContextMainIntegration:
         # Seeded memories should be found — skip if LLM non-determinism
         # caused infer=True to extract zero facts during seeding.
         if "hookSpecificOutput" not in result:
-            pytest.skip(
-                "Seeded memories not found in search (LLM non-determinism); "
-                "re-run to verify"
-            )
+            pytest.skip("Seeded memories not found in search (LLM non-determinism); re-run to verify")
         ctx = result["hookSpecificOutput"]["additionalContext"]
         assert "# mem0 Cross-Session Memory" in ctx
         # At least one numbered memory line
@@ -130,11 +128,13 @@ class TestContextMainIntegration:
         """User with no memories gets a clean non-fatal response."""
         monkeypatch.setenv("MEM0_USER_ID", "inttest-nonexistent-user-xyz")
 
-        stdin_data = json.dumps({
-            "session_id": "inttest-empty",
-            "cwd": "/home/user/emptyproject",
-            "hook_event_name": "startup",
-        })
+        stdin_data = json.dumps(
+            {
+                "session_id": "inttest-empty",
+                "cwd": "/home/user/emptyproject",
+                "hook_event_name": "startup",
+            }
+        )
 
         with patch.object(hooks, "_get_memory", return_value=hook_memory):
             result = _capture_output(hooks.context_main, stdin_data)
@@ -156,15 +156,24 @@ class TestSessionEndMainIntegration:
         # Create a realistic transcript
         transcript = tmp_path / "transcript.jsonl"
         transcript.write_text(
-            json.dumps({"role": "user", "content": "Configure the MCP server to use Qdrant on port 6333 with collection name mem0_production"}) + "\n"
-            + json.dumps({"role": "assistant", "content": "Done. I've updated the .env file to set MEM0_QDRANT_URL=http://localhost:6333 and MEM0_COLLECTION=mem0_production. The server will use these settings on next restart."}) + "\n"
+            json.dumps({"role": "user", "content": "Configure the MCP server to use Qdrant on port 6333 with collection name mem0_production"})
+            + "\n"
+            + json.dumps(
+                {
+                    "role": "assistant",
+                    "content": "Done. I've updated the .env file to set MEM0_QDRANT_URL=http://localhost:6333 and MEM0_COLLECTION=mem0_production. The server will use these settings on next restart.",
+                }
+            )
+            + "\n"
         )
 
-        stdin_data = json.dumps({
-            "session_id": "inttest-stop",
-            "cwd": "/home/user/testproject",
-            "transcript_path": str(transcript),
-        })
+        stdin_data = json.dumps(
+            {
+                "session_id": "inttest-stop",
+                "cwd": "/home/user/testproject",
+                "transcript_path": str(transcript),
+            }
+        )
 
         saved_ids = []
         try:
@@ -185,10 +194,7 @@ class TestSessionEndMainIntegration:
             # LLM inference is non-deterministic — skip rather than fail
             # if the model didn't extract any facts this run.
             if not results:
-                pytest.skip(
-                    "LLM extracted zero facts from transcript (non-deterministic); "
-                    "re-run to verify"
-                )
+                pytest.skip("LLM extracted zero facts from transcript (non-deterministic); re-run to verify")
 
             # At least one result should reference the distinctive content
             all_text = " ".join(r.get("memory", "") for r in results).lower()
@@ -212,15 +218,24 @@ class TestSessionEndMainIntegration:
 
         transcript = tmp_path / "transcript.jsonl"
         transcript.write_text(
-            json.dumps({"role": "user", "content": "Refactor the authentication middleware to support both JWT and API key validation with proper error messages"}) + "\n"
-            + json.dumps({"role": "assistant", "content": "I've added a dual-auth middleware that checks Authorization header format: Bearer tokens go through JWT validation, x-api-key headers go through the API key store. Both return 401 with descriptive errors on failure."}) + "\n"
+            json.dumps({"role": "user", "content": "Refactor the authentication middleware to support both JWT and API key validation with proper error messages"})
+            + "\n"
+            + json.dumps(
+                {
+                    "role": "assistant",
+                    "content": "I've added a dual-auth middleware that checks Authorization header format: Bearer tokens go through JWT validation, x-api-key headers go through the API key store. Both return 401 with descriptive errors on failure.",
+                }
+            )
+            + "\n"
         )
 
-        stdin_data = json.dumps({
-            "session_id": "inttest-roundtrip",
-            "cwd": "/home/user/testproject",
-            "transcript_path": str(transcript),
-        })
+        stdin_data = json.dumps(
+            {
+                "session_id": "inttest-roundtrip",
+                "cwd": "/home/user/testproject",
+                "transcript_path": str(transcript),
+            }
+        )
 
         saved_ids = []
         try:
@@ -233,9 +248,9 @@ class TestSessionEndMainIntegration:
             # Log timing for visibility (30s is the production budget)
             if elapsed > 30:
                 import warnings
+
                 warnings.warn(
-                    f"session_end_main took {elapsed:.1f}s — exceeds 30s Claude Code budget. "
-                    "Check LLM provider performance.",
+                    f"session_end_main took {elapsed:.1f}s — exceeds 30s Claude Code budget. Check LLM provider performance.",
                     stacklevel=1,
                 )
 

@@ -88,10 +88,7 @@ class OpenAICompatLLM(OpenAILLM):
         **kwargs: Any,
     ):
         if isinstance(response_format, dict) and response_format.get("type") == "json_object":
-            logger.debug(
-                "OpenAICompatLLM: replacing unsupported response_format={'type': 'json_object'} "
-                "with {'type': 'text'} for local server compatibility"
-            )
+            logger.debug("OpenAICompatLLM: replacing unsupported response_format={'type': 'json_object'} with {'type': 'text'} for local server compatibility")
             response_format = {"type": "text"}
 
         messages = _sanitize_messages(messages)

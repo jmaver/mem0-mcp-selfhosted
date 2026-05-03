@@ -91,10 +91,7 @@ class TestToolDiscovery:
             assert schema["type"] == "object"
             actual_required = set(schema.get("required", []))
             expected_required = REQUIRED_PARAMS[tool.name]
-            assert actual_required == expected_required, (
-                f"Tool {tool.name!r}: expected required={expected_required}, "
-                f"got {actual_required}"
-            )
+            assert actual_required == expected_required, f"Tool {tool.name!r}: expected required={expected_required}, got {actual_required}"
 
 
 # ============================================================
@@ -105,9 +102,7 @@ class TestToolDiscovery:
 class TestCallToolRoundTrip:
     @pytest.mark.asyncio
     async def test_add_memory(self, mcp_server, mock_memory):
-        content_blocks, _ = await mcp_server.call_tool(
-            "add_memory", {"text": "I prefer Python", "project": "my-project"}
-        )
+        content_blocks, _ = await mcp_server.call_tool("add_memory", {"text": "I prefer Python", "project": "my-project"})
         assert len(content_blocks) > 0
         text = content_blocks[0].text
         parsed = json.loads(text)
@@ -116,9 +111,7 @@ class TestCallToolRoundTrip:
 
     @pytest.mark.asyncio
     async def test_search_memories(self, mcp_server, mock_memory):
-        content_blocks, _ = await mcp_server.call_tool(
-            "search_memories", {"query": "Python preferences", "project": "my-project"}
-        )
+        content_blocks, _ = await mcp_server.call_tool("search_memories", {"query": "Python preferences", "project": "my-project"})
         assert len(content_blocks) > 0
         text = content_blocks[0].text
         parsed = json.loads(text)
@@ -158,9 +151,7 @@ class TestErrorPropagation:
     @pytest.mark.asyncio
     async def test_tool_exception_returns_json_error(self, mcp_server, mock_memory):
         mock_memory.get.side_effect = RuntimeError("connection lost")
-        content_blocks, _ = await mcp_server.call_tool(
-            "get_memory", {"memory_id": "uuid-123"}
-        )
+        content_blocks, _ = await mcp_server.call_tool("get_memory", {"memory_id": "uuid-123"})
         assert len(content_blocks) > 0
         text = content_blocks[0].text
         parsed = json.loads(text)

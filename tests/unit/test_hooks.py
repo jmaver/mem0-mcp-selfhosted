@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from io import StringIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -35,6 +34,7 @@ class TestGetDefaultUserIdInHooks:
     def test_dotenv_loaded_at_module_level(self):
         """load_dotenv() runs at module init, so MEM0_USER_ID from .env is visible."""
         import inspect
+
         source = inspect.getsource(hooks)
         # load_dotenv() should be called at module level, not just inside a function
         lines = source.split("\n")
@@ -52,6 +52,7 @@ class TestGetDefaultUserIdInHooks:
     def test_context_main_uses_get_default_user_id(self):
         """context_main imports get_default_user_id from helpers (not _get_user_id)."""
         import inspect
+
         source = inspect.getsource(hooks)
         assert "get_default_user_id" in source, "hooks must use helpers.get_default_user_id"
         assert "_get_user_id" not in source, "_get_user_id was removed; use helpers.get_default_user_id"
@@ -196,15 +197,17 @@ class TestContextMain:
             result = _capture_output(hooks.context_main, self._make_stdin())
 
         ctx = self._get_additional_context(result)
-        lines = [l for l in ctx.split("\n") if l and l[0].isdigit()]
+        lines = [line for line in ctx.split("\n") if line and line[0].isdigit()]
         assert len(lines) == hooks._MAX_MEMORIES
 
     def test_empty_cwd_uses_project_fallback(self):
         """Empty cwd falls back to 'project' in search queries."""
         mock_mem = MagicMock()
-        mock_mem.search.return_value = {"results": [
-            {"id": "m1", "memory": "some fact"},
-        ]}
+        mock_mem.search.return_value = {
+            "results": [
+                {"id": "m1", "memory": "some fact"},
+            ]
+        }
 
         with patch.object(hooks, "_get_memory", return_value=mock_mem):
             result = _capture_output(hooks.context_main, self._make_stdin(cwd=""))
@@ -262,12 +265,7 @@ class TestReadRecentMessages:
     def test_malformed_jsonl_lines_skipped(self, tmp_path):
         """Corrupted lines in transcript are silently skipped."""
         p = tmp_path / "transcript.jsonl"
-        p.write_text(
-            '{"role": "user", "content": "first valid message is long enough"}\n'
-            'THIS IS NOT JSON\n'
-            '{"role": "assistant", "content": "second valid response text"}\n'
-            '{ALSO BROKEN\n'
-        )
+        p.write_text('{"role": "user", "content": "first valid message is long enough"}\nTHIS IS NOT JSON\n{"role": "assistant", "content": "second valid response text"}\n{ALSO BROKEN\n')
         result = hooks._read_recent_messages(str(p))
         assert len(result) == 2
         assert result[0] == ("user", "first valid message is long enough")
@@ -352,10 +350,16 @@ class TestSessionEndMain:
 
     def test_normal_transcript_saves_to_mem0(self, tmp_path):
         """Normal session with meaningful messages saves to mem0."""
-        transcript = self._make_transcript(tmp_path, [
-            {"role": "user", "content": "Please refactor the authentication module to use JWT tokens instead of sessions"},
-            {"role": "assistant", "content": "I've refactored the auth module. The key changes are: replaced express-session with jsonwebtoken, added token refresh endpoint, and updated all middleware to validate JWT headers."},
-        ])
+        transcript = self._make_transcript(
+            tmp_path,
+            [
+                {"role": "user", "content": "Please refactor the authentication module to use JWT tokens instead of sessions"},
+                {
+                    "role": "assistant",
+                    "content": "I've refactored the auth module. The key changes are: replaced express-session with jsonwebtoken, added token refresh endpoint, and updated all middleware to validate JWT headers.",
+                },
+            ],
+        )
 
         mock_mem = MagicMock()
 
@@ -379,10 +383,13 @@ class TestSessionEndMain:
 
     def test_content_blocks_format(self, tmp_path):
         """Handles Claude Code's content block format."""
-        transcript = self._make_transcript(tmp_path, [
-            {"role": "user", "content": [{"type": "text", "text": "Implement a caching layer for the database queries with TTL support"}]},
-            {"role": "assistant", "content": [{"type": "text", "text": "Done. Added Redis-backed cache with configurable TTL per query type. Default is 5 minutes."}]},
-        ])
+        transcript = self._make_transcript(
+            tmp_path,
+            [
+                {"role": "user", "content": [{"type": "text", "text": "Implement a caching layer for the database queries with TTL support"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "Done. Added Redis-backed cache with configurable TTL per query type. Default is 5 minutes."}]},
+            ],
+        )
 
         mock_mem = MagicMock()
 
@@ -401,10 +408,13 @@ class TestSessionEndMain:
 
     def test_short_session_skipped(self, tmp_path):
         """Short sessions (both messages below threshold) are skipped."""
-        transcript = self._make_transcript(tmp_path, [
-            {"role": "user", "content": "hi"},
-            {"role": "assistant", "content": "Hello! How can I help?"},
-        ])
+        transcript = self._make_transcript(
+            tmp_path,
+            [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "Hello! How can I help?"},
+            ],
+        )
 
         mock_mem = MagicMock()
 
@@ -448,23 +458,28 @@ class TestSessionEndMain:
         with patch.object(hooks, "_get_memory", side_effect=RuntimeError("boom")):
             result = _capture_output(
                 hooks.session_end_main,
-                json.dumps({
-                    "session_id": "s",
-                    "cwd": "/x",
-                    "transcript_path": "/nonexistent",
-                }),
+                json.dumps(
+                    {
+                        "session_id": "s",
+                        "cwd": "/x",
+                        "transcript_path": "/nonexistent",
+                    }
+                ),
             )
 
         assert result == {"continue": True, "suppressOutput": True}
 
     def test_multi_exchange_captures_session_arc(self, tmp_path):
         """Multiple exchanges are included in the summary for richer context."""
-        transcript = self._make_transcript(tmp_path, [
-            {"role": "user", "content": "Let's add authentication to the API using JWT tokens"},
-            {"role": "assistant", "content": "I'll set up JWT authentication. First, I'll install jsonwebtoken and create the middleware."},
-            {"role": "user", "content": "Good. Now add refresh token rotation for security"},
-            {"role": "assistant", "content": "Added refresh token rotation. Tokens are stored in Redis with a 7-day TTL and single-use enforcement."},
-        ])
+        transcript = self._make_transcript(
+            tmp_path,
+            [
+                {"role": "user", "content": "Let's add authentication to the API using JWT tokens"},
+                {"role": "assistant", "content": "I'll set up JWT authentication. First, I'll install jsonwebtoken and create the middleware."},
+                {"role": "user", "content": "Good. Now add refresh token rotation for security"},
+                {"role": "assistant", "content": "Added refresh token rotation. Tokens are stored in Redis with a 7-day TTL and single-use enforcement."},
+            ],
+        )
 
         mock_mem = MagicMock()
 
@@ -482,10 +497,13 @@ class TestSessionEndMain:
 
     def test_mem_add_raises_returns_nonfatal(self, tmp_path):
         """Exception during mem.add() is caught and produces non-fatal response."""
-        transcript = self._make_transcript(tmp_path, [
-            {"role": "user", "content": "Please refactor the authentication module to use JWT tokens instead of sessions"},
-            {"role": "assistant", "content": "I've refactored the auth module. Replaced express-session with jsonwebtoken and added refresh endpoint."},
-        ])
+        transcript = self._make_transcript(
+            tmp_path,
+            [
+                {"role": "user", "content": "Please refactor the authentication module to use JWT tokens instead of sessions"},
+                {"role": "assistant", "content": "I've refactored the auth module. Replaced express-session with jsonwebtoken and added refresh endpoint."},
+            ],
+        )
 
         mock_mem = MagicMock()
         mock_mem.add.side_effect = RuntimeError("LLM timeout")
@@ -640,11 +658,7 @@ class TestInstallMain:
         assert len(settings["hooks"]["SessionStart"]) == 2
         assert len(settings["hooks"]["SessionEnd"]) == 2
         # Extract commands from nested hooks arrays
-        commands = [
-            handler["command"]
-            for group in settings["hooks"]["SessionStart"]
-            for handler in group.get("hooks", [])
-        ]
+        commands = [handler["command"] for group in settings["hooks"]["SessionStart"] for handler in group.get("hooks", [])]
         assert "other-hook" in commands
         assert "mem0-hook-context" in commands
 
@@ -752,11 +766,7 @@ class TestInstallMain:
         settings = json.loads((claude_dir / "settings.json").read_text())
         # Both hooks migrated, no duplicates for mem0-hook-context
         assert len(settings["hooks"]["SessionStart"]) == 2
-        commands = [
-            handler["command"]
-            for group in settings["hooks"]["SessionStart"]
-            for handler in group.get("hooks", [])
-        ]
+        commands = [handler["command"] for group in settings["hooks"]["SessionStart"] for handler in group.get("hooks", [])]
         assert "other-hook" in commands
         assert "mem0-hook-context" in commands
 

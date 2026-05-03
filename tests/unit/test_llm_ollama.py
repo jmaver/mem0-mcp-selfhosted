@@ -112,7 +112,7 @@ class TestStripThinkTags:
 
     def test_unclosed_think_tag_removed(self):
         """Unclosed <think> removes everything from tag to end."""
-        text = '<think>partial reasoning'
+        text = "<think>partial reasoning"
         assert _strip_think_tags(text) == ""
 
     def test_content_without_think_tags_unchanged(self):
@@ -122,13 +122,13 @@ class TestStripThinkTags:
 
     def test_think_tags_with_surrounding_content(self):
         """Think tags embedded in content are removed, surrounding preserved."""
-        text = 'prefix <think>reasoning</think> suffix'
-        assert _strip_think_tags(text) == 'prefix  suffix'
+        text = "prefix <think>reasoning</think> suffix"
+        assert _strip_think_tags(text) == "prefix  suffix"
 
     def test_multiple_think_blocks(self):
         """Multiple think blocks are all removed."""
-        text = '<think>first</think>middle<think>second</think>end'
-        assert _strip_think_tags(text) == 'middleend'
+        text = "<think>first</think>middle<think>second</think>end"
+        assert _strip_think_tags(text) == "middleend"
 
     def test_empty_string(self):
         """Empty string passes through."""
@@ -244,9 +244,7 @@ class TestParseResponse:
 
         result = ollama_llm._parse_response(response, tools=SAMPLE_TOOLS)
 
-        assert result["tool_calls"] == [
-            {"name": "extract_entities", "arguments": {"entities": [{"name": "Alice"}]}}
-        ]
+        assert result["tool_calls"] == [{"name": "extract_entities", "arguments": {"entities": [{"name": "Alice"}]}}]
 
     def test_tool_calls_parsed_from_dict_format(self, ollama_llm):
         """Legacy dict format: {"function": {"name": ..., "arguments": ...}}."""
@@ -266,9 +264,7 @@ class TestParseResponse:
 
         result = ollama_llm._parse_response(response, tools=SAMPLE_TOOLS)
 
-        assert result["tool_calls"] == [
-            {"name": "extract_entities", "arguments": {"entities": [{"name": "Bob"}]}}
-        ]
+        assert result["tool_calls"] == [{"name": "extract_entities", "arguments": {"entities": [{"name": "Bob"}]}}]
 
     def test_empty_tool_calls_when_none(self, ollama_llm):
         """When response has no tool_calls, returns empty list."""
@@ -339,6 +335,7 @@ class TestNoThinkInjection:
         with patch.dict("os.environ", {}, clear=False):
             # Ensure MEM0_OLLAMA_THINK is not set
             import os
+
             os.environ.pop("MEM0_OLLAMA_THINK", None)
 
             ollama_llm.generate_response(
@@ -359,6 +356,7 @@ class TestNoThinkInjection:
 
         with patch.dict("os.environ", {}, clear=False):
             import os
+
             os.environ.pop("MEM0_OLLAMA_THINK", None)
 
             ollama_llm.generate_response(
@@ -379,6 +377,7 @@ class TestNoThinkInjection:
 
         with patch.dict("os.environ", {}, clear=False):
             import os
+
             os.environ.pop("MEM0_OLLAMA_THINK", None)
 
             ollama_llm.generate_response(
@@ -400,6 +399,7 @@ class TestNoThinkInjection:
 
         with patch.dict("os.environ", {}, clear=False):
             import os
+
             os.environ.pop("MEM0_OLLAMA_THINK", None)
 
             ollama_llm.generate_response(
@@ -440,6 +440,7 @@ class TestNoThinkInjection:
 
         with patch.dict("os.environ", {}, clear=False):
             import os
+
             os.environ.pop("MEM0_OLLAMA_THINK", None)
 
             ollama_llm.generate_response(
@@ -523,6 +524,7 @@ class TestKeepAlive:
 
         with patch.dict("os.environ", {}, clear=False):
             import os
+
             os.environ.pop("MEM0_OLLAMA_KEEP_ALIVE", None)
 
             ollama_llm.generate_response(

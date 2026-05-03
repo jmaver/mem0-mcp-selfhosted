@@ -42,11 +42,7 @@ def patch_gemini_parse_response() -> None:
         return
 
     def _safe_parse_response(self, response, *args, **kwargs):  # noqa: ANN001
-        if (
-            response.candidates
-            and response.candidates[0].content is not None
-            and response.candidates[0].content.parts
-        ):
+        if response.candidates and response.candidates[0].content is not None and response.candidates[0].content.parts:
             return original(self, response, *args, **kwargs)
         logger.warning("[mem0] Gemini returned null content — returning empty string")
         return ""
@@ -146,9 +142,7 @@ def _mem0_call(func: Callable, *args: Any, **kwargs: Any) -> str:
         result = func(*args, **kwargs)
     except Exception as exc:
         exc_type = type(exc).__name__
-        is_memory_error = any(
-            cls.__name__ == "MemoryError" for cls in type(exc).__mro__
-        )
+        is_memory_error = any(cls.__name__ == "MemoryError" for cls in type(exc).__mro__)
         if is_memory_error:
             logger.error("Mem0 call failed: %s", exc)
             return json.dumps(
@@ -211,15 +205,11 @@ def list_entities_facet(memory: Any) -> dict[str, list[dict]]:
                 collection_name=collection,
                 key=payload_key,
             )
-            result[result_key] = [
-                {"value": hit.value, "count": hit.count}
-                for hit in facet_response.hits
-            ]
+            result[result_key] = [{"value": hit.value, "count": hit.count} for hit in facet_response.hits]
         return result
     except Exception as exc:
         logger.warning(
-            "Qdrant Facet API unavailable (%s). Falling back to scroll+dedupe. "
-            "Upgrade to Qdrant v1.12+ for better performance.",
+            "Qdrant Facet API unavailable (%s). Falling back to scroll+dedupe. Upgrade to Qdrant v1.12+ for better performance.",
             exc,
         )
         return _list_entities_scroll_fallback(memory)

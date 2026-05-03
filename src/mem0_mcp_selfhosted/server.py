@@ -431,7 +431,7 @@ def _register_prompts(mcp: FastMCP) -> None:
             "- user_id is automatically injected from MEM0_USER_ID default\n"
             "- Use infer=false to store raw text without LLM extraction\n"
             "- Use threshold on search_memories to filter by relevance score\n"
-            "- Use filters for structured queries: {\"key\": {\"eq\": \"value\"}}\n"
+            '- Use filters for structured queries: {"key": {"eq": "value"}}\n'
         )
 
 

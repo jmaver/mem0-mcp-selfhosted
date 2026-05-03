@@ -52,9 +52,7 @@ def _read_credentials_file() -> str | None:
     try:
         token = data["claudeAiOauth"]["accessToken"]
     except (KeyError, TypeError):
-        logger.warning(
-            "Credentials file %s missing claudeAiOauth.accessToken", _CREDENTIALS_PATH
-        )
+        logger.warning("Credentials file %s missing claudeAiOauth.accessToken", _CREDENTIALS_PATH)
         return None
 
     if not token or not isinstance(token, str):
@@ -80,9 +78,7 @@ def resolve_token() -> str | None:
     token = _read_credentials_file()
     if token:
         token_type = "OAT" if is_oat_token(token) else "API key"
-        logger.debug(
-            "Auth resolved from %s (type: %s)", _CREDENTIALS_PATH, token_type
-        )
+        logger.debug("Auth resolved from %s (type: %s)", _CREDENTIALS_PATH, token_type)
         return token
 
     # Priority 3: Standard API key
@@ -94,9 +90,7 @@ def resolve_token() -> str | None:
 
     # No auth available
     logger.warning(
-        "No Anthropic token found. Checked: MEM0_ANTHROPIC_TOKEN env var, "
-        "%s, ANTHROPIC_API_KEY env var. "
-        "Anthropic LLM features will be disabled.",
+        "No Anthropic token found. Checked: MEM0_ANTHROPIC_TOKEN env var, %s, ANTHROPIC_API_KEY env var. Anthropic LLM features will be disabled.",
         _CREDENTIALS_PATH,
     )
     return None
@@ -194,9 +188,7 @@ def refresh_oat_token(refresh_token: str) -> dict | None:
     return None
 
 
-def is_token_expiring_soon(
-    expires_at_ms: int | None, threshold_seconds: int = 1800
-) -> bool:
+def is_token_expiring_soon(expires_at_ms: int | None, threshold_seconds: int = 1800) -> bool:
     """Check whether an OAT token will expire within the given threshold.
 
     Args:

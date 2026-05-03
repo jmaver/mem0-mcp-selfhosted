@@ -7,7 +7,6 @@ defaults, scope validation, error handling, and delegation to helpers.
 from __future__ import annotations
 
 import json
-import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -294,9 +293,7 @@ class TestInitMemory:
     @patch("mem0.Memory.from_config")
     @patch("mem0.utils.factory.LlmFactory.register_provider")
     @patch("mem0_mcp_selfhosted.server.build_config")
-    def test_registers_both_providers_anthropic(
-        self, mock_bc, mock_reg, mock_from_config
-    ):
+    def test_registers_both_providers_anthropic(self, mock_bc, mock_reg, mock_from_config):
         mock_memory = MagicMock()
         mock_from_config.return_value = mock_memory
         mock_bc.return_value = (
@@ -368,9 +365,11 @@ class TestRegisterProviders:
     @patch("mem0.utils.factory.LlmFactory.register_provider")
     def test_anthropic_oat_registers_without_error(self, mock_reg):
         """anthropic_oat provider registers successfully with LlmFactory."""
-        server_mod.register_providers([
-            {"name": "anthropic_oat", "class_path": "mem0_mcp_selfhosted.llm_anthropic.AnthropicOATLLM"},
-        ])
+        server_mod.register_providers(
+            [
+                {"name": "anthropic_oat", "class_path": "mem0_mcp_selfhosted.llm_anthropic.AnthropicOATLLM"},
+            ]
+        )
         mock_reg.assert_called_once()
         assert mock_reg.call_args[1]["name"] == "anthropic_oat"
 
@@ -378,9 +377,11 @@ class TestRegisterProviders:
     def test_unknown_provider_logs_warning(self, mock_reg):
         """Unknown provider name logs a warning and is skipped."""
         with patch("mem0_mcp_selfhosted.server.logger") as mock_logger:
-            server_mod.register_providers([
-                {"name": "unknown_provider", "class_path": "some.module.SomeClass"},
-            ])
+            server_mod.register_providers(
+                [
+                    {"name": "unknown_provider", "class_path": "some.module.SomeClass"},
+                ]
+            )
         mock_logger.warning.assert_called_once()
         assert "unknown_provider" in mock_logger.warning.call_args[0][1]
         mock_reg.assert_not_called()

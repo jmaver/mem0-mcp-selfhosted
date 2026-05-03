@@ -27,24 +27,13 @@ def _capture_output(func, stdin_data: str = "{}") -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 6.1  _get_user_id
+# 6.1  get_default_user_id (previously _get_user_id — now from helpers)
 # ---------------------------------------------------------------------------
 
 
-class TestGetUserId:
-    def test_returns_env_var_when_set(self, monkeypatch):
-        monkeypatch.setenv("MEM0_USER_ID", "alice")
-        assert hooks._get_user_id() == "alice"
-
-    def test_returns_default_when_unset(self, monkeypatch):
-        monkeypatch.delenv("MEM0_USER_ID", raising=False)
-        assert hooks._get_user_id() == "user"
-
-    def test_dotenv_loaded_before_get_user_id(self):
-        """load_dotenv() runs at module init, so .env values are visible."""
-        # Verify the module-level load_dotenv() import exists —
-        # this guards against regression of the bug where _get_user_id()
-        # was called before load_dotenv() in context_main().
+class TestGetDefaultUserIdInHooks:
+    def test_dotenv_loaded_at_module_level(self):
+        """load_dotenv() runs at module init, so MEM0_USER_ID from .env is visible."""
         import inspect
         source = inspect.getsource(hooks)
         # load_dotenv() should be called at module level, not just inside a function
@@ -60,6 +49,13 @@ class TestGetUserId:
                 break
         assert found_module_level_call, "load_dotenv() must be called at module level"
 
+    def test_context_main_uses_get_default_user_id(self):
+        """context_main imports get_default_user_id from helpers (not _get_user_id)."""
+        import inspect
+        source = inspect.getsource(hooks)
+        assert "get_default_user_id" in source, "hooks must use helpers.get_default_user_id"
+        assert "_get_user_id" not in source, "_get_user_id was removed; use helpers.get_default_user_id"
+
 
 # ---------------------------------------------------------------------------
 # 6.2  _get_memory
@@ -73,26 +69,19 @@ class TestGetMemory:
         with patch.object(hooks, "_memory", sentinel):
             assert hooks._get_memory() is sentinel
 
-    def test_graph_disabled_in_env(self, monkeypatch):
-        """_get_memory() sets MEM0_ENABLE_GRAPH=false and caches result."""
-        calls = []
-
-        def fake_build_config():
-            calls.append(os.environ.get("MEM0_ENABLE_GRAPH"))
-            return {}, [], None
-
+    def test_initializes_and_caches(self, monkeypatch):
+        """_get_memory() initializes Memory.from_config and caches result."""
         fake_mem = MagicMock(name="FreshMemory")
 
         # monkeypatch auto-restores _memory after the test
         monkeypatch.setattr(hooks, "_memory", None)
         with (
-            patch("mem0_mcp_selfhosted.config.build_config", fake_build_config),
+            patch("mem0_mcp_selfhosted.config.build_config", return_value=({}, [])),
             patch("mem0_mcp_selfhosted.server.register_providers"),
             patch("mem0.Memory.from_config", return_value=fake_mem),
         ):
             result = hooks._get_memory()
 
-        assert calls == ["false"]
         assert result is fake_mem
         # Verify the result was cached in the module global
         assert hooks._memory is fake_mem
@@ -220,8 +209,9 @@ class TestContextMain:
         with patch.object(hooks, "_get_memory", return_value=mock_mem):
             result = _capture_output(hooks.context_main, self._make_stdin(cwd=""))
 
-        # Verify search was called with 'project' fallback in user_id
-        first_uid = mock_mem.search.call_args_list[0].kwargs["user_id"]
+        # v3: user_id is inside the filters dict, not a top-level kwarg
+        first_filters = mock_mem.search.call_args_list[0].kwargs["filters"]
+        first_uid = first_filters["user_id"]
         assert "project" in first_uid
         assert self._get_additional_context(result) is not None
 

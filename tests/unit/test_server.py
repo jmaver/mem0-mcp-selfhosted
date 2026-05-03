@@ -30,8 +30,6 @@ def _env_defaults(monkeypatch):
 def mock_memory():
     """Create a mock Memory object and patch server globals."""
     mem = MagicMock()
-    mem.graph = None
-    mem.enable_graph = False
     mem.add.return_value = {"results": [{"id": "mem-1", "memory": "test fact"}]}
     mem.search.return_value = {"results": [{"id": "mem-1", "score": 0.95}]}
     mem.get_all.return_value = {"results": [{"id": "mem-1"}]}
@@ -45,16 +43,13 @@ def mock_memory():
 def server_with_mock(mock_memory):
     """Create a FastMCP server with mocked Memory and helpers."""
     original_memory = server_mod.memory
-    original_graph_default = server_mod._enable_graph_default
     server_mod.memory = mock_memory
-    server_mod._enable_graph_default = False
 
     srv = server_mod._create_server()
 
     yield srv, mock_memory
 
     server_mod.memory = original_memory
-    server_mod._enable_graph_default = original_graph_default
 
 
 def _get_tool_fn(srv, name: str):
@@ -131,13 +126,20 @@ class TestSearchMemories:
         )
         # Two searches: project-scoped + global
         assert mem.search.call_count == 2
-        # First call: project-scoped
-        _, kwargs1 = mem.search.call_args_list[0]
-        assert kwargs1["user_id"] == "bob:my-project"
-        assert kwargs1["query"] == "python preferences"
-        # Second call: global
-        _, kwargs2 = mem.search.call_args_list[1]
-        assert kwargs2["user_id"] == "bob"
+        # Both calls use v3 filters dict
+        for c in mem.search.call_args_list:
+            kwargs = c.kwargs
+            assert "filters" in kwargs
+            assert "user_id" in kwargs["filters"]
+            assert "user_id" not in kwargs, "v3: user_id must not be top-level kwarg"
+            # agent_id / run_id must be in filters, not top-level
+            assert kwargs["filters"].get("agent_id") == "agent-1"
+            assert kwargs["filters"].get("run_id") == "run-1"
+            assert "agent_id" not in kwargs
+            assert "run_id" not in kwargs
+            # limit is renamed to top_k
+            assert kwargs.get("top_k") == 5
+            assert "limit" not in kwargs
 
     def test_global_project_single_search(self, server_with_mock):
         """search_memories with project='global' runs one search."""
@@ -146,24 +148,44 @@ class TestSearchMemories:
         fn = _get_tool_fn(srv, "search_memories")
         fn(query="python preferences", project="global")
         assert mem.search.call_count == 1
-        _, kwargs = mem.search.call_args
-        assert kwargs["user_id"] == "test-user"
+        kwargs = mem.search.call_args.kwargs
+        assert kwargs["filters"]["user_id"] == "test-user"
 
 
 class TestGetMemories:
     def test_scope_filters(self, server_with_mock):
+        """get_memories passes filters dict to mem.get_all (v3 contract)."""
         srv, mem = server_with_mock
         fn = _get_tool_fn(srv, "get_memories")
         fn(project="my-project", user_id="alice", agent_id="agent-1", run_id="run-1", limit=10)
         mem.get_all.assert_called_once_with(
-            user_id="alice:my-project", agent_id="agent-1", run_id="run-1", limit=10
+            filters={"user_id": "alice:my-project", "agent_id": "agent-1", "run_id": "run-1"},
+            top_k=10,
         )
 
     def test_global_project(self, server_with_mock):
+        """get_memories with global project passes filters dict with bare user_id."""
         srv, mem = server_with_mock
         fn = _get_tool_fn(srv, "get_memories")
         fn(project="global")
-        mem.get_all.assert_called_once_with(user_id="test-user")
+        mem.get_all.assert_called_once_with(filters={"user_id": "test-user"})
+
+    def test_no_limit_omits_top_k(self, server_with_mock):
+        """When limit is not provided, top_k is not passed to get_all."""
+        srv, mem = server_with_mock
+        fn = _get_tool_fn(srv, "get_memories")
+        fn(project="my-project")
+        _, kwargs = mem.get_all.call_args
+        assert "top_k" not in kwargs
+
+    def test_no_top_level_user_id(self, server_with_mock):
+        """v3: user_id must not appear as a top-level kwarg to mem.get_all."""
+        srv, mem = server_with_mock
+        fn = _get_tool_fn(srv, "get_memories")
+        fn(project="my-project", user_id="alice")
+        _, kwargs = mem.get_all.call_args
+        assert "user_id" not in kwargs, "v3: user_id must be inside filters dict, not top-level"
+        assert kwargs["filters"]["user_id"] == "alice:my-project"
 
 
 class TestGetMemory:
@@ -201,7 +223,7 @@ class TestDeleteAllMemories:
         srv, mem = server_with_mock
         fn = _get_tool_fn(srv, "delete_all_memories")
         result = fn(project="my-project")
-        mock_sbd.assert_called_once_with(mem, {"user_id": "test-user:my-project"}, graph_enabled=False)
+        mock_sbd.assert_called_once_with(mem, {"user_id": "test-user:my-project"})
         parsed = json.loads(result)
         assert parsed["count"] == 0
 
@@ -210,7 +232,7 @@ class TestDeleteAllMemories:
         srv, mem = server_with_mock
         fn = _get_tool_fn(srv, "delete_all_memories")
         result = fn(project="my-project", user_id="alice")
-        mock_sbd.assert_called_once_with(mem, {"user_id": "alice:my-project"}, graph_enabled=False)
+        mock_sbd.assert_called_once_with(mem, {"user_id": "alice:my-project"})
         parsed = json.loads(result)
         assert parsed["count"] == 3
 
@@ -218,8 +240,8 @@ class TestDeleteAllMemories:
     def test_global_project(self, mock_sbd, server_with_mock):
         srv, mem = server_with_mock
         fn = _get_tool_fn(srv, "delete_all_memories")
-        result = fn(project="global")
-        mock_sbd.assert_called_once_with(mem, {"user_id": "test-user"}, graph_enabled=False)
+        fn(project="global")
+        mock_sbd.assert_called_once_with(mem, {"user_id": "test-user"})
 
 
 class TestListEntities:
@@ -247,27 +269,9 @@ class TestDeleteEntities:
         srv, mem = server_with_mock
         fn = _get_tool_fn(srv, "delete_entities")
         result = fn(user_id="alice")
-        mock_sbd.assert_called_once_with(mem, {"user_id": "alice"}, graph_enabled=False)
+        mock_sbd.assert_called_once_with(mem, {"user_id": "alice"})
         parsed = json.loads(result)
         assert parsed["count"] == 5
-
-
-class TestGraphTools:
-    @patch("mem0_mcp_selfhosted.server.search_graph")
-    def test_search_graph_delegation(self, mock_sg, server_with_mock):
-        mock_sg.return_value = '{"entities": []}'
-        srv, _ = server_with_mock
-        fn = _get_tool_fn(srv, "mcp_search_graph")
-        fn(query="Python")
-        mock_sg.assert_called_once_with("Python")
-
-    @patch("mem0_mcp_selfhosted.server.get_entity")
-    def test_get_entity_delegation(self, mock_ge, server_with_mock):
-        mock_ge.return_value = '{"relationships": []}'
-        srv, _ = server_with_mock
-        fn = _get_tool_fn(srv, "mcp_get_entity")
-        fn(name="TypeScript")
-        mock_ge.assert_called_once_with("TypeScript")
 
 
 # ============================================================
@@ -287,15 +291,13 @@ class TestToolErrorHandling:
 
 
 class TestInitMemory:
-    @patch("mem0_mcp_selfhosted.server.patch_graph_sanitizer")
     @patch("mem0.Memory.from_config")
     @patch("mem0.utils.factory.LlmFactory.register_provider")
     @patch("mem0_mcp_selfhosted.server.build_config")
     def test_registers_both_providers_anthropic(
-        self, mock_bc, mock_reg, mock_from_config, mock_patch
+        self, mock_bc, mock_reg, mock_from_config
     ):
         mock_memory = MagicMock()
-        mock_memory.graph = None
         mock_from_config.return_value = mock_memory
         mock_bc.return_value = (
             {"llm": {"provider": "anthropic", "config": {}}},
@@ -309,20 +311,16 @@ class TestInitMemory:
                     "class_path": "mem0_mcp_selfhosted.llm_anthropic.AnthropicOATLLM",
                 },
             ],
-            None,
         )
         server_mod._init_memory()
         assert mock_reg.call_count == 2  # Both Ollama and Anthropic registered
-        mock_patch.assert_called_once()
 
-    @patch("mem0_mcp_selfhosted.server.patch_graph_sanitizer")
     @patch("mem0.Memory.from_config")
     @patch("mem0.utils.factory.LlmFactory.register_provider")
     @patch("mem0_mcp_selfhosted.server.build_config")
-    def test_registers_ollama_only(self, mock_bc, mock_reg, mock_from_config, mock_patch):
+    def test_registers_ollama_only(self, mock_bc, mock_reg, mock_from_config):
         """When LLM is ollama, only ollama provider is registered (always included)."""
         mock_memory = MagicMock()
-        mock_memory.graph = None
         mock_from_config.return_value = mock_memory
         mock_bc.return_value = (
             {"llm": {"provider": "ollama", "config": {}}},
@@ -332,34 +330,11 @@ class TestInitMemory:
                     "class_path": "mem0_mcp_selfhosted.llm_ollama.OllamaToolLLM",
                 },
             ],
-            None,
         )
         server_mod._init_memory()
         mock_reg.assert_called_once()
         call_kwargs = mock_reg.call_args
         assert call_kwargs.kwargs["name"] == "ollama"
-
-    @patch("mem0_mcp_selfhosted.server.patch_graph_sanitizer")
-    @patch("mem0.Memory.from_config")
-    @patch("mem0_mcp_selfhosted.server.build_config")
-    def test_patches_graph_sanitizer(self, mock_bc, mock_from_config, mock_patch):
-        call_order = []
-        mock_patch.side_effect = lambda: call_order.append("patch_graph_sanitizer")
-        mock_memory = MagicMock()
-        mock_memory.graph = None
-        mock_from_config.side_effect = lambda cfg: (
-            call_order.append("from_config") or mock_memory
-        )
-        mock_bc.return_value = (
-            {"llm": {"provider": "ollama", "config": {}}},
-            [],
-            None,
-        )
-        server_mod._init_memory()
-        mock_patch.assert_called_once()
-        assert call_order.index("patch_graph_sanitizer") < call_order.index("from_config"), (
-            f"patch_graph_sanitizer must be called before Memory.from_config, got: {call_order}"
-        )
 
 
 class TestResolveConfigClass:
@@ -412,10 +387,11 @@ class TestRegisterProviders:
 
 
 class TestCreateServer:
-    def test_registers_11_tools(self):
+    def test_registers_9_tools(self):
+        """v3: server registers exactly 9 tools (graph tools removed)."""
         srv = server_mod._create_server()
         tools = srv._tool_manager._tools
-        assert len(tools) == 11, f"Expected 11 tools, got {len(tools)}: {list(tools.keys())}"
+        assert len(tools) == 9, f"Expected 9 tools, got {len(tools)}: {list(tools.keys())}"
 
     def test_registers_prompt(self):
         srv = server_mod._create_server()
@@ -429,9 +405,16 @@ class TestCreateServer:
         try:
             srv = server_mod._create_server()
             tools = srv._tool_manager._tools
-            assert len(tools) == 11
+            assert len(tools) == 9
         finally:
             server_mod.memory = original
+
+    def test_no_graph_tools(self):
+        """Graph tools mcp_search_graph and mcp_get_entity must not be registered."""
+        srv = server_mod._create_server()
+        tools = srv._tool_manager._tools
+        assert "mcp_search_graph" not in tools
+        assert "mcp_get_entity" not in tools
 
 
 # ============================================================
@@ -455,7 +438,6 @@ class TestEnsureMemory:
     def test_lazy_init_on_first_call(self, mock_init):
         """_ensure_memory() triggers _init_memory() on first call."""
         mock_mem = MagicMock()
-        mock_mem.graph = None
 
         def set_memory():
             server_mod.memory = mock_mem

@@ -1,20 +1,19 @@
-"""Tests for helpers.py — error wrapper, call_with_graph, bulk delete, user_id, sanitizer, Gemini patch."""
+"""Tests for helpers.py — error wrapper, safe_bulk_delete, user_id, Gemini patch, search_with_project."""
 
 from __future__ import annotations
 
 import json
-import threading
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
 from mem0_mcp_selfhosted.helpers import (
-    _make_enhanced_sanitizer,
     _mem0_call,
-    call_with_graph,
     get_default_user_id,
+    make_project_user_id,
     patch_gemini_parse_response,
     safe_bulk_delete,
+    search_with_project,
 )
 
 
@@ -61,63 +60,9 @@ class TestMem0Call:
         assert "prefiere" in result
 
 
-class TestCallWithGraph:
-    def test_sets_enable_graph_true(self):
-        memory = MagicMock()
-        memory.graph = MagicMock()
-
-        def _check():
-            assert memory.enable_graph is True
-            return "ok"
-
-        result = call_with_graph(memory, True, False, _check)
-        assert result == "ok"
-
-    def test_sets_enable_graph_false(self):
-        memory = MagicMock()
-        memory.graph = MagicMock()
-
-        def _check():
-            assert memory.enable_graph is False
-            return "ok"
-
-        result = call_with_graph(memory, False, True, _check)
-        assert result == "ok"
-
-    def test_uses_default_when_none(self):
-        memory = MagicMock()
-        memory.graph = MagicMock()
-
-        def _check():
-            assert memory.enable_graph is True
-            return "ok"
-
-        result = call_with_graph(memory, None, True, _check)
-        assert result == "ok"
-
-    def test_graph_none_forces_false(self):
-        """If memory.graph is None, enable_graph stays False regardless."""
-        memory = MagicMock()
-        memory.graph = None
-
-        def _check():
-            assert memory.enable_graph is False
-            return "ok"
-
-        result = call_with_graph(memory, True, True, _check)
-        assert result == "ok"
-
-    def test_none_memory_raises_runtime_error(self):
-        """call_with_graph raises RuntimeError when memory is None."""
-        with pytest.raises(RuntimeError, match="Memory not initialized"):
-            call_with_graph(None, False, False, lambda: "ok")
-
-
 class TestSafeBulkDelete:
     def test_iterates_and_deletes(self):
         memory = MagicMock()
-        memory.enable_graph = False
-        memory.graph = None
 
         # Mock vector_store.list returning items with .id
         item1 = MagicMock()
@@ -133,33 +78,36 @@ class TestSafeBulkDelete:
         memory.delete.assert_any_call("id-1")
         memory.delete.assert_any_call("id-2")
 
-    def test_graph_cleanup_when_graph_enabled_true(self):
+    def test_empty_memories_returns_zero(self):
         memory = MagicMock()
-        memory.graph = MagicMock()
         memory.vector_store.list.return_value = []
 
-        safe_bulk_delete(memory, {"user_id": "testuser"}, graph_enabled=True)
+        count = safe_bulk_delete(memory, {"user_id": "testuser"})
 
-        memory.graph.delete_all.assert_called_once_with({"user_id": "testuser"})
+        assert count == 0
+        memory.delete.assert_not_called()
 
-    def test_no_graph_cleanup_when_graph_enabled_false(self):
-        memory = MagicMock()
-        memory.graph = MagicMock()
-        memory.vector_store.list.return_value = []
-
-        safe_bulk_delete(memory, {"user_id": "testuser"}, graph_enabled=False)
-
-        memory.graph.delete_all.assert_not_called()
-
-    def test_no_graph_cleanup_default(self):
-        """Default graph_enabled=False skips graph cleanup."""
-        memory = MagicMock()
-        memory.graph = MagicMock()
+    def test_no_graph_cleanup(self):
+        """v3: no graph attribute on Memory — safe_bulk_delete never calls graph.delete_all."""
+        memory = MagicMock(spec=["vector_store", "delete"])
         memory.vector_store.list.return_value = []
 
         safe_bulk_delete(memory, {"user_id": "testuser"})
 
-        memory.graph.delete_all.assert_not_called()
+        # The mock has no graph attribute — this should NOT raise AttributeError
+        assert not hasattr(memory, "graph") or not memory.graph.delete_all.called
+
+    def test_delete_error_is_swallowed(self):
+        """Failed deletes are logged and counted as 0, not raised."""
+        memory = MagicMock()
+        item = MagicMock()
+        item.id = "bad-id"
+        memory.vector_store.list.return_value = [item]
+        memory.delete.side_effect = RuntimeError("DB error")
+
+        count = safe_bulk_delete(memory, {"user_id": "testuser"})
+
+        assert count == 0
 
 
 class TestGetDefaultUserId:
@@ -172,109 +120,168 @@ class TestGetDefaultUserId:
         assert get_default_user_id() == "bob"
 
 
-class TestEnhancedSanitizer:
-    """Tests for the enhanced relationship name sanitizer."""
+class TestMakeProjectUserId:
+    def test_with_project(self):
+        assert make_project_user_id("alice", "my-app") == "alice:my-app"
 
-    @pytest.fixture()
-    def sanitize(self):
-        """Create enhanced sanitizer wrapping a passthrough original."""
-        # Simulate mem0ai's original: returns input unchanged (our tests
-        # focus on what the wrapper adds, not on the original's char_map).
-        return _make_enhanced_sanitizer(lambda r: r)
+    def test_global_project(self):
+        assert make_project_user_id("alice", "global") == "alice"
 
-    def test_leading_digit_gets_prefix(self, sanitize):
-        """Neo4j types can't start with digits — should get rel_ prefix."""
-        assert sanitize("3tier_fallback") == "rel_3tier_fallback"
+    def test_none_project(self):
+        assert make_project_user_id("alice", None) == "alice"
 
-    def test_leading_digit_with_hyphen(self, sanitize):
-        """The exact error case: '3-tier_oat_token_fallback'."""
-        result = sanitize("3-tier_oat_token_fallback")
-        assert result == "rel_3_tier_oat_token_fallback"
-        assert result[0].isalpha()
+    def test_empty_project(self):
+        assert make_project_user_id("alice", "") == "alice"
 
-    def test_hyphens_replaced(self, sanitize):
-        """Hyphens should become underscores."""
-        assert sanitize("has-authored") == "has_authored"
 
-    def test_multiple_hyphens(self, sanitize):
-        """Multiple hyphens in a row collapse to single underscore."""
-        assert sanitize("is--related--to") == "is_related_to"
+class TestSearchWithProject:
+    """Tests for search_with_project — v3 API contract."""
 
-    def test_spaces_replaced(self, sanitize):
-        """Spaces should become underscores."""
-        assert sanitize("author of") == "author_of"
+    def test_uses_filters_dict_not_top_level_user_id(self):
+        """v3: mem.search must receive filters={'user_id': ...}, not user_id=... at top level."""
+        mock_mem = MagicMock()
+        mock_mem.search.return_value = {"results": []}
 
-    def test_mixed_special_chars(self, sanitize):
-        """Mix of problematic characters."""
-        assert sanitize("has.authored-by!user") == "has_authored_by_user"
+        search_with_project(mock_mem, "q", "alice", "myproj")
 
-    def test_already_valid(self, sanitize):
-        """Valid relationship type passes through unchanged."""
-        assert sanitize("WORKS_FOR") == "WORKS_FOR"
+        # Both calls (project + global) must use filters dict
+        calls = mock_mem.search.call_args_list
+        assert len(calls) == 2
+        for c in calls:
+            kwargs = c.kwargs
+            assert "filters" in kwargs, "v3 requires filters= kwarg on mem.search"
+            assert "user_id" in kwargs["filters"], "user_id must be inside filters dict"
+            assert "user_id" not in kwargs, "v3 forbids top-level user_id on search"
 
-    def test_already_valid_lowercase(self, sanitize):
-        """Valid lowercase type passes through unchanged."""
-        assert sanitize("prefers") == "prefers"
+    def test_project_scoped_search_uses_composite_user_id(self):
+        """Project search uses user_id:project composite."""
+        mock_mem = MagicMock()
+        mock_mem.search.return_value = {"results": []}
 
-    def test_empty_string_fallback(self, sanitize):
-        """Empty string gets fallback name."""
-        assert sanitize("") == "related_to"
+        search_with_project(mock_mem, "q", "alice", "myproj")
 
-    def test_only_special_chars_fallback(self, sanitize):
-        """String of only special chars gets fallback name."""
-        assert sanitize("---") == "related_to"
+        first_call = mock_mem.search.call_args_list[0]
+        assert first_call.kwargs["filters"]["user_id"] == "alice:myproj"
 
-    def test_consecutive_underscores_collapsed(self, sanitize):
-        """Multiple underscores collapse to one."""
-        assert sanitize("foo___bar") == "foo_bar"
+    def test_global_search_uses_bare_user_id(self):
+        """Global scope uses bare user_id."""
+        mock_mem = MagicMock()
+        mock_mem.search.return_value = {"results": []}
 
-    def test_leading_trailing_underscores_stripped(self, sanitize):
-        """Leading/trailing underscores are stripped."""
-        assert sanitize("_foo_bar_") == "foo_bar"
+        search_with_project(mock_mem, "q", "alice", "myproj")
 
-    def test_pure_digits(self, sanitize):
-        """Pure numeric string gets prefix."""
-        assert sanitize("123") == "rel_123"
+        second_call = mock_mem.search.call_args_list[1]
+        assert second_call.kwargs["filters"]["user_id"] == "alice"
 
-    def test_unicode_stripped(self, sanitize):
-        """Non-ASCII characters become underscores then get collapsed/stripped."""
-        result = sanitize("関係_type")
-        # 関係 → __ → stripped, leaving just "type"
-        assert result == "type"
+    def test_global_project_runs_single_search(self):
+        """project='global' runs only one search (no project-scoped call)."""
+        mock_mem = MagicMock()
+        mock_mem.search.return_value = {"results": []}
 
-    def test_wraps_original_function(self):
-        """Enhanced sanitizer calls the original function first."""
-        call_log = []
+        search_with_project(mock_mem, "q", "alice", "global")
 
-        def mock_original(r):
-            call_log.append(r)
-            return r.replace("&", "_ampersand_")
+        assert mock_mem.search.call_count == 1
+        kwargs = mock_mem.search.call_args.kwargs
+        assert kwargs["filters"]["user_id"] == "alice"
 
-        enhanced = _make_enhanced_sanitizer(mock_original)
-        result = enhanced("has&uses")
-        assert call_log == ["has&uses"]
-        assert result == "has_ampersand_uses"
+    def test_none_project_runs_single_global_search(self):
+        """project=None runs only global search."""
+        mock_mem = MagicMock()
+        mock_mem.search.return_value = {"results": []}
 
-    def test_valid_neo4j_pattern(self, sanitize):
-        """All outputs must match Neo4j's identifier pattern."""
-        import re
+        search_with_project(mock_mem, "q", "alice", None)
 
-        pattern = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
-        test_cases = [
-            "3-tier_oat_token_fallback",
-            "has-authored",
-            "is professor of",
-            "123",
-            "---",
-            "",
-            "WORKS_FOR",
-            "has.dot.notation",
-            "with spaces and-hyphens",
-            "5th_element",
+        assert mock_mem.search.call_count == 1
+
+    def test_agent_id_and_run_id_folded_into_filters(self):
+        """v3 entity-ID folding: agent_id and run_id go into filters dict, NOT as top-level kwargs."""
+        mock_mem = MagicMock()
+        mock_mem.search.return_value = {"results": []}
+
+        search_with_project(
+            mock_mem,
+            "q",
+            "alice",
+            "myproj",
+            agent_id="agent-1",
+            run_id="run-1",
+        )
+
+        for c in mock_mem.search.call_args_list:
+            kwargs = c.kwargs
+            # Must be inside filters
+            assert kwargs["filters"].get("agent_id") == "agent-1"
+            assert kwargs["filters"].get("run_id") == "run-1"
+            # Must NOT be top-level kwargs
+            assert "agent_id" not in kwargs, "agent_id must not be a top-level kwarg to mem.search"
+            assert "run_id" not in kwargs, "run_id must not be a top-level kwarg to mem.search"
+
+    def test_limit_renamed_to_top_k(self):
+        """v3 rename: limit= passed by caller becomes top_k= in mem.search call."""
+        mock_mem = MagicMock()
+        mock_mem.search.return_value = {"results": []}
+
+        search_with_project(mock_mem, "q", "alice", "myproj", limit=7)
+
+        for c in mock_mem.search.call_args_list:
+            kwargs = c.kwargs
+            assert kwargs.get("top_k") == 7, "limit must be forwarded as top_k to mem.search"
+            assert "limit" not in kwargs, "limit must not leak as a top-level kwarg to mem.search"
+
+    def test_top_k_passed_directly(self):
+        """top_k= passed directly by caller is forwarded as top_k= to mem.search."""
+        mock_mem = MagicMock()
+        mock_mem.search.return_value = {"results": []}
+
+        search_with_project(mock_mem, "q", "alice", "myproj", top_k=10)
+
+        for c in mock_mem.search.call_args_list:
+            kwargs = c.kwargs
+            assert kwargs.get("top_k") == 10
+
+    def test_deduplication_by_id(self):
+        """Results with the same ID are deduplicated; project results take precedence."""
+        mock_mem = MagicMock()
+        mock_mem.search.side_effect = [
+            {"results": [{"id": "m1", "memory": "project fact"}, {"id": "m2", "memory": "project only"}]},
+            {"results": [{"id": "m1", "memory": "global fact"}, {"id": "m3", "memory": "global only"}]},
         ]
-        for case in test_cases:
-            result = sanitize(case)
-            assert pattern.match(result), f"'{case}' → '{result}' is not a valid Neo4j type"
+
+        results = search_with_project(mock_mem, "q", "alice", "myproj")
+
+        ids = [r["id"] for r in results]
+        assert ids.count("m1") == 1, "m1 must appear only once (deduplication)"
+        # Project result takes precedence for m1
+        m1 = next(r for r in results if r["id"] == "m1")
+        assert m1["memory"] == "project fact"
+
+    def test_results_as_plain_list(self):
+        """mem.search returning a plain list (not dict) is handled."""
+        mock_mem = MagicMock()
+        mock_mem.search.return_value = [{"id": "m1", "memory": "plain list fact"}]
+
+        results = search_with_project(mock_mem, "q", "alice", "global")
+
+        assert len(results) == 1
+        assert results[0]["id"] == "m1"
+
+    def test_extra_filters_merged(self):
+        """Caller-supplied filters dict is merged with user_id filter."""
+        mock_mem = MagicMock()
+        mock_mem.search.return_value = {"results": []}
+
+        search_with_project(
+            mock_mem,
+            "q",
+            "alice",
+            "myproj",
+            filters={"source": "chat"},
+        )
+
+        for c in mock_mem.search.call_args_list:
+            kwargs = c.kwargs
+            assert kwargs["filters"].get("source") == "chat"
+            assert "user_id" in kwargs["filters"]
 
 
 class TestPatchGeminiParseResponse:
@@ -282,7 +289,6 @@ class TestPatchGeminiParseResponse:
 
     def test_null_content_returns_empty_string(self):
         """When Gemini returns candidate with content=None, return empty string."""
-        # Create a mock GeminiLLM class with a _parse_response method
         mock_module = MagicMock()
         mock_gemini_cls = MagicMock()
         original_parse = MagicMock(return_value="original result")
@@ -291,14 +297,11 @@ class TestPatchGeminiParseResponse:
         with patch.dict("sys.modules", {"mem0.llms.gemini": mock_module}):
             mock_module.GeminiLLM = mock_gemini_cls
 
-            # Apply the patch
             patch_gemini_parse_response()
 
-            # Verify the method was replaced
             patched_method = mock_gemini_cls._parse_response
             assert patched_method is not original_parse
 
-            # Test with null content
             response = MagicMock()
             candidate = MagicMock()
             candidate.content = None
@@ -320,7 +323,6 @@ class TestPatchGeminiParseResponse:
             patch_gemini_parse_response()
             patched_method = mock_gemini_cls._parse_response
 
-            # Test with valid content
             response = MagicMock()
             candidate = MagicMock()
             candidate.content = MagicMock()

@@ -18,7 +18,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Load .env early so _get_user_id() sees MEM0_USER_ID even when it's
+# Load .env early so get_default_user_id() sees MEM0_USER_ID even when
 # called before _get_memory().  load_dotenv(override=False) is the
 # default — it never clobbers values already in os.environ.
 load_dotenv()

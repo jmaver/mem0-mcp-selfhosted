@@ -177,3 +177,96 @@ class TestOllamaLLMInterface:
             "INVARIANT BROKEN: OllamaLLM.__init__ must accept a 'config' parameter. "
             f"Our OllamaToolLLM inherits __init__ from it. Found params: {params}"
         )
+
+
+class TestV3SearchGetAllContract:
+    """Lock in v3 API contracts for Memory.search and Memory.get_all.
+
+    If a future mem0ai release changes these signatures, search_with_project
+    and get_memories tools will silently break.
+    """
+
+    def test_memory_search_accepts_filters_kwarg(self):
+        """v3 contract: Memory.search accepts 'filters' dict kwarg."""
+        try:
+            from mem0 import Memory
+        except ImportError:
+            pytest.skip("mem0ai not installed")
+
+        import inspect
+
+        sig = inspect.signature(Memory.search)
+        params = sig.parameters
+        assert "filters" in params, (
+            "INVARIANT BROKEN: Memory.search must accept 'filters' kwarg in v3. "
+            "Our search_with_project passes filters={'user_id': ...}."
+        )
+
+    def test_memory_search_no_top_level_user_id(self):
+        """v3 contract: Memory.search must NOT accept top-level 'user_id' kwarg.
+
+        In v3, user_id goes inside filters={}. If this fails, it means mem0
+        added back the deprecated form — callers should still use filters={}.
+        """
+        try:
+            from mem0 import Memory
+        except ImportError:
+            pytest.skip("mem0ai not installed")
+
+        import inspect
+
+        sig = inspect.signature(Memory.search)
+        params = sig.parameters
+        assert "user_id" not in params, (
+            "INVARIANT CHANGED: Memory.search accepted top-level 'user_id' in v3. "
+            "If mem0 re-added this, verify our filters={} approach still works "
+            "and update this contract test accordingly."
+        )
+
+    def test_memory_search_accepts_top_k_kwarg(self):
+        """v3 contract: Memory.search accepts 'top_k' kwarg (not 'limit')."""
+        try:
+            from mem0 import Memory
+        except ImportError:
+            pytest.skip("mem0ai not installed")
+
+        import inspect
+
+        sig = inspect.signature(Memory.search)
+        params = sig.parameters
+        assert "top_k" in params, (
+            "INVARIANT BROKEN: Memory.search must accept 'top_k' kwarg in v3. "
+            "Our search_with_project forwards limit= as top_k=."
+        )
+
+    def test_memory_get_all_accepts_filters_kwarg(self):
+        """v3 contract: Memory.get_all accepts 'filters' dict kwarg."""
+        try:
+            from mem0 import Memory
+        except ImportError:
+            pytest.skip("mem0ai not installed")
+
+        import inspect
+
+        sig = inspect.signature(Memory.get_all)
+        params = sig.parameters
+        assert "filters" in params, (
+            "INVARIANT BROKEN: Memory.get_all must accept 'filters' kwarg in v3. "
+            "Our get_memories tool passes filters={'user_id': ...}."
+        )
+
+    def test_memory_get_all_accepts_top_k_kwarg(self):
+        """v3 contract: Memory.get_all accepts 'top_k' kwarg (not 'limit')."""
+        try:
+            from mem0 import Memory
+        except ImportError:
+            pytest.skip("mem0ai not installed")
+
+        import inspect
+
+        sig = inspect.signature(Memory.get_all)
+        params = sig.parameters
+        assert "top_k" in params, (
+            "INVARIANT BROKEN: Memory.get_all must accept 'top_k' kwarg in v3. "
+            "Our get_memories tool passes top_k= when limit is provided."
+        )

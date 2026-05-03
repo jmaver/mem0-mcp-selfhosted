@@ -21,7 +21,6 @@ from pydantic import Field
 from mem0_mcp_selfhosted.config import ProviderInfo, build_config
 from mem0_mcp_selfhosted.env import env
 from mem0_mcp_selfhosted.helpers import (
-    PROJECT_GLOBAL,
     _mem0_call,
     get_default_user_id,
     list_entities_facet,
@@ -41,6 +40,13 @@ mcp: FastMCP | None = None
 _memory_init_lock = threading.Lock()
 _last_init_failure: float = 0.0
 _INIT_RETRY_COOLDOWN = 30.0  # seconds before retrying after a failed init
+
+# Pre-serialized response for the "infrastructure unreachable" path; used by
+# every tool handler so the JSON shape stays identical across tools.
+_MEMORY_NOT_INITIALIZED = json.dumps(
+    {"error": "Memory not initialized", "detail": "Infrastructure may be unavailable."},
+    ensure_ascii=False,
+)
 
 
 def register_providers(providers_info: list[ProviderInfo]) -> None:
@@ -111,7 +117,6 @@ def _ensure_memory() -> Any:
 
     Returns the Memory instance, or None if initialization failed.
     After a failure, waits ``_INIT_RETRY_COOLDOWN`` seconds before retrying.
-    Matches the lazy-init pattern used by ``graph_tools._get_driver()``.
     """
     global memory, _last_init_failure
 
@@ -189,12 +194,7 @@ def _register_tools(mcp: FastMCP) -> None:
     ) -> str:
         """Store a new memory. Requires at least one of user_id, agent_id, or run_id."""
         uid = make_project_user_id(user_id or get_default_user_id(), project)
-
-        # Build messages for mem0ai
-        if messages:
-            msgs = messages
-        else:
-            msgs = [{"role": "user", "content": text}]
+        msgs = messages or [{"role": "user", "content": text}]
 
         kwargs: dict[str, Any] = {"user_id": uid}
         if agent_id:
@@ -207,13 +207,9 @@ def _register_tools(mcp: FastMCP) -> None:
             kwargs["infer"] = infer
 
         mem = _ensure_memory()
-
-        def _do_add():
-            return mem.add(msgs, **kwargs)
-
         if mem is None:
-            return json.dumps({"error": "Memory not initialized", "detail": "Infrastructure may be unavailable."}, ensure_ascii=False)
-        return _mem0_call(_do_add)
+            return _MEMORY_NOT_INITIALIZED
+        return _mem0_call(mem.add, msgs, **kwargs)
 
     @mcp.tool()
     def search_memories(
@@ -229,7 +225,6 @@ def _register_tools(mcp: FastMCP) -> None:
     ) -> str:
         """Semantic search across existing memories. Searches project-scoped + global memories."""
         uid = user_id or get_default_user_id()
-        mem = _ensure_memory()
 
         search_kwargs: dict[str, Any] = {}
         if agent_id:
@@ -245,12 +240,10 @@ def _register_tools(mcp: FastMCP) -> None:
         if rerank is not None:
             search_kwargs["rerank"] = rerank
 
-        def _do_search():
-            return search_with_project(mem, query, uid, project, **search_kwargs)
-
+        mem = _ensure_memory()
         if mem is None:
-            return json.dumps({"error": "Memory not initialized", "detail": "Infrastructure may be unavailable."}, ensure_ascii=False)
-        return _mem0_call(_do_search)
+            return _MEMORY_NOT_INITIALIZED
+        return _mem0_call(search_with_project, mem, query, uid, project, **search_kwargs)
 
     @mcp.tool()
     def get_memories(
@@ -273,7 +266,7 @@ def _register_tools(mcp: FastMCP) -> None:
 
         mem = _ensure_memory()
         if mem is None:
-            return json.dumps({"error": "Memory not initialized", "detail": "Infrastructure may be unavailable."}, ensure_ascii=False)
+            return _MEMORY_NOT_INITIALIZED
         return _mem0_call(mem.get_all, **kwargs)
 
     @mcp.tool()
@@ -283,7 +276,7 @@ def _register_tools(mcp: FastMCP) -> None:
         """Fetch a single memory by its ID."""
         mem = _ensure_memory()
         if mem is None:
-            return json.dumps({"error": "Memory not initialized", "detail": "Infrastructure may be unavailable."}, ensure_ascii=False)
+            return _MEMORY_NOT_INITIALIZED
         return _mem0_call(mem.get, memory_id)
 
     @mcp.tool()
@@ -294,7 +287,7 @@ def _register_tools(mcp: FastMCP) -> None:
         """Overwrite an existing memory's text. Re-embeds and re-indexes."""
         mem = _ensure_memory()
         if mem is None:
-            return json.dumps({"error": "Memory not initialized", "detail": "Infrastructure may be unavailable."}, ensure_ascii=False)
+            return _MEMORY_NOT_INITIALIZED
 
         def _do_update():
             mem.update(memory_id, data=text)
@@ -309,7 +302,7 @@ def _register_tools(mcp: FastMCP) -> None:
         """Delete a single memory."""
         mem = _ensure_memory()
         if mem is None:
-            return json.dumps({"error": "Memory not initialized", "detail": "Infrastructure may be unavailable."}, ensure_ascii=False)
+            return _MEMORY_NOT_INITIALIZED
 
         def _do_delete():
             mem.delete(memory_id)
@@ -345,7 +338,7 @@ def _register_tools(mcp: FastMCP) -> None:
 
         mem = _ensure_memory()
         if mem is None:
-            return json.dumps({"error": "Memory not initialized", "detail": "Infrastructure may be unavailable."}, ensure_ascii=False)
+            return _MEMORY_NOT_INITIALIZED
 
         def _do_bulk_delete():
             count = safe_bulk_delete(mem, filters)
@@ -366,12 +359,8 @@ def _register_tools(mcp: FastMCP) -> None:
         """
         mem = _ensure_memory()
         if mem is None:
-            return json.dumps({"error": "Memory not initialized", "detail": "Infrastructure may be unavailable."}, ensure_ascii=False)
-
-        def _do_list():
-            return list_entities_facet(mem)
-
-        return _mem0_call(_do_list)
+            return _MEMORY_NOT_INITIALIZED
+        return _mem0_call(list_entities_facet, mem)
 
     @mcp.tool()
     def delete_entities(
@@ -399,7 +388,7 @@ def _register_tools(mcp: FastMCP) -> None:
 
         mem = _ensure_memory()
         if mem is None:
-            return json.dumps({"error": "Memory not initialized", "detail": "Infrastructure may be unavailable."}, ensure_ascii=False)
+            return _MEMORY_NOT_INITIALIZED
 
         def _do_delete_entity():
             count = safe_bulk_delete(mem, filters)

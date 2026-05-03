@@ -41,7 +41,7 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo]]:
     """
     token = resolve_token()
 
-    # --- Top-level provider default (cascades to LLM and graph LLM) ---
+    # --- Top-level provider default (cascades to LLM provider when unset) ---
     _provider_default = env("MEM0_PROVIDER", "anthropic")
     _supported_llm_providers = ("anthropic", "ollama", "openai")
     if _provider_default not in _supported_llm_providers:
@@ -89,14 +89,13 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo]]:
     _embed_model_defaults = {"ollama": "bge-m3", "openai": "text-embedding-3-small"}
     _embed_dims_defaults = {"ollama": 1024, "openai": 1536}
     embed_model = env("MEM0_EMBED_MODEL", _embed_model_defaults[embed_provider])
-    embed_url = _resolve_ollama_url("MEM0_EMBED_URL")
     embed_dims = int(env("MEM0_EMBED_DIMS", str(_embed_dims_defaults[embed_provider])))
 
     embedder_config: dict[str, Any] = {
         "model": embed_model,
     }
     if embed_provider == "ollama":
-        embedder_config["ollama_base_url"] = embed_url
+        embedder_config["ollama_base_url"] = _resolve_ollama_url("MEM0_EMBED_URL")
     elif embed_provider == "openai":
         openai_embed_url = opt_env("MEM0_EMBED_URL") or opt_env("MEM0_LLM_URL")
         if openai_embed_url:
@@ -169,16 +168,13 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo]]:
     # Register OpenAI-compat provider when openai is used — overrides
     # mem0ai's built-in OpenAILLM to strip unsupported json_object response_format
     # (LM Studio / vLLM / llama.cpp only accept json_schema or text).
-    _needs_openai_compat = llm_provider == "openai"
-    if _needs_openai_compat:
+    if llm_provider == "openai":
         providers_info.append({
             "name": "openai",
             "class_path": "mem0_mcp_selfhosted.llm_openai_compat.OpenAICompatLLM",
         })
 
-    # Register Anthropic when used as main LLM
-    _needs_anthropic = llm_provider == "anthropic"
-    if _needs_anthropic:
+    if llm_provider == "anthropic":
         providers_info.append({
             "name": "anthropic",
             "class_path": "mem0_mcp_selfhosted.llm_anthropic.AnthropicOATLLM",

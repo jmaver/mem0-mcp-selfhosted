@@ -41,11 +41,6 @@ _MAX_CONTENT_LEN = 4000
 _RECENT_WINDOW = 20  # last ~10 exchanges (user+assistant pairs)
 
 
-def _get_user_id() -> str:
-    """Resolve user ID from MEM0_USER_ID env var, defaulting to ``'user'``."""
-    return os.environ.get("MEM0_USER_ID", "user")
-
-
 def _get_memory():
     """Lazy-initialize and cache a mem0 Memory instance.
 
@@ -116,16 +111,18 @@ def context_main() -> None:
         project_name = Path(cwd).name if cwd else "project"
         if not project_name:
             project_name = "project"
-        user_id = _get_user_id()
+
+        from mem0_mcp_selfhosted.helpers import get_default_user_id, search_with_project
+
+        user_id = get_default_user_id()
         _log_hook_event("context", f"project='{project_name}' user_id='{user_id}' cwd='{cwd}'")
 
         _log_hook_event("context", "initializing memory client...")
         mem = _get_memory()
         _log_hook_event("context", "memory client ready")
 
-        # --- Multi-query search with deduplication ---
-        from mem0_mcp_selfhosted.helpers import search_with_project
-
+        # search_with_project already deduplicates by ID across project + global,
+        # so cross-query dedup happens here against the merged list.
         seen_ids: set[str] = set()
         all_memories: list[dict] = []
 
@@ -144,7 +141,6 @@ def context_main() -> None:
                     seen_ids.add(mid)
                     all_memories.append(r)
 
-        # Cap total injected memories
         all_memories = all_memories[:_MAX_MEMORIES]
 
         if not all_memories:
@@ -300,10 +296,10 @@ def session_end_main() -> None:
         _log_hook_event("session_end", "initializing memory client...")
         mem = _get_memory()
         _log_hook_event("session_end", "memory client ready")
-        user_id = _get_user_id()
 
-        from mem0_mcp_selfhosted.helpers import make_project_user_id
+        from mem0_mcp_selfhosted.helpers import get_default_user_id, make_project_user_id
 
+        user_id = get_default_user_id()
         project_uid = make_project_user_id(user_id, project_name)
         _log_hook_event("session_end", f"calling mem.add (user_id={project_uid})...")
 

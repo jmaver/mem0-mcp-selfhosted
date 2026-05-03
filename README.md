@@ -24,7 +24,7 @@ Uses the `mem0ai` package directly as a library, supports both Claude's OAT toke
 
 Python 3.10–3.12 and [uv](https://docs.astral.sh/uv/getting-started/installation/).
 
-> **One-time setup:** After installation, run `python -m spacy download en_core_web_sm` once to enable v3's entity linking. (`uvx`-based installs do this transparently per-environment — manual installs need it explicitly.)
+> **Upgrading from v0.3 (with existing Qdrant data)?** v0.3 collections lack the BM25 sparse-vector schema that v0.4 (mem0 v3) writes alongside dense vectors. mem0 v3 will fail on upsert when it can't find the sparse-vector slot. Either point `MEM0_COLLECTION` at a new name and re-seed, or drop and recreate the existing collection. The smoke procedure in `Development` below operates on its own collection so it won't touch your data.
 
 > **Authentication:** The default setup uses Claude (Anthropic) as the LLM for fact extraction. No API key needed, the server automatically uses your Claude Code session token. For fully local setups, set `MEM0_PROVIDER=ollama`. See [Authentication](#authentication) for advanced options.
 
@@ -58,7 +58,7 @@ claude mcp add --scope user --transport stdio mem0 \
   -- uvx --from git+https://github.com/elvismdev/mem0-mcp-selfhosted.git mem0-mcp-selfhosted
 ```
 
-`MEM0_PROVIDER=ollama` cascades to both the main LLM and graph LLM providers. Same infrastructure defaults apply (Qdrant on `localhost:6333`, `bge-m3` embeddings). Per-service overrides (e.g. `MEM0_LLM_URL`, `MEM0_EMBED_URL`) still work when needed.
+`MEM0_PROVIDER=ollama` cascades to the main LLM provider when `MEM0_LLM_PROVIDER` is unset. It does not affect `MEM0_EMBED_PROVIDER`. Same infrastructure defaults apply (Qdrant on `localhost:6333`, `bge-m3` embeddings). Per-service overrides (e.g. `MEM0_LLM_URL`, `MEM0_EMBED_URL`) still work when needed.
 
 Or add it to a single project by creating `.mcp.json` in the project root:
 
@@ -329,20 +329,21 @@ For remote deployments, MCP SDK >= 1.23.0 enables DNS rebinding protection by de
 ## Development
 
 ```bash
-# Install with dev dependencies
-pip install -e ".[dev]"
+# Install with dev dependencies (includes ruff, pytest, and the
+# en_core_web_sm spaCy model wheel as a real project dependency)
+uv sync --extra dev
 
 # Run unit tests
-python3 -m pytest tests/unit/ -v
+uv run pytest tests/unit/ -v
 
 # Run contract tests (validates mem0ai internal API assumptions)
-python3 -m pytest tests/contract/ -v
+uv run pytest tests/contract/ -v
 
 # Run integration tests (requires live Qdrant + Ollama)
-python3 -m pytest tests/integration/ -v
+uv run pytest tests/integration/ -v
 
 # Run all tests
-python3 -m pytest tests/ -v
+uv run pytest tests/ -v
 ```
 
 ### Test Structure

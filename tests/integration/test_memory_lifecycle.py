@@ -30,9 +30,11 @@ class TestMemoryLifecycle:
             user_id=test_user_id,
         )
 
+        # v3: entity IDs go inside filters dict; user_id= as a top-level kwarg
+        # is silently swallowed by **kwargs and the search becomes unscoped.
         results = memory_instance.search(
             query="Python packaging tool preference",
-            user_id=test_user_id,
+            filters={"user_id": test_user_id},
         )
 
         assert "results" in results
@@ -62,7 +64,8 @@ class TestMemoryLifecycle:
         )
         memory_id = add_result["results"][0]["id"]
 
-        all_result = memory_instance.get_all(user_id=test_user_id)
+        # v3: get_all takes filters dict, not top-level user_id kwarg.
+        all_result = memory_instance.get_all(filters={"user_id": test_user_id})
 
         assert "results" in all_result
         ids = [r["id"] for r in all_result["results"]]
@@ -81,7 +84,7 @@ class TestMemoryLifecycle:
 
         results = memory_instance.search(
             query="text editor preference",
-            user_id=test_user_id,
+            filters={"user_id": test_user_id},
         )
 
         assert "results" in results

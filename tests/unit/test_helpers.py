@@ -113,6 +113,42 @@ class TestSafeBulkDelete:
 
         assert count == 0
 
+    def test_paginates_past_default_top_k(self):
+        """Regression: Qdrant.list() defaults top_k=100. Without paging, bulk
+        delete silently capped at 100. Verify the helper requests top_k=1000
+        per page AND keeps paging while pages are full."""
+        memory = MagicMock()
+
+        # Simulate two full pages (1000 each) then a short page (5).
+        page_a = [MagicMock(id=f"id-a-{i}") for i in range(1000)]
+        page_b = [MagicMock(id=f"id-b-{i}") for i in range(1000)]
+        page_c = [MagicMock(id=f"id-c-{i}") for i in range(5)]
+        memory.vector_store.list.side_effect = [
+            (page_a, "offset-1"),
+            (page_b, "offset-2"),
+            (page_c, None),
+        ]
+
+        count = safe_bulk_delete(memory, {"user_id": "huge-scope"})
+
+        assert count == 2005, f"expected 2005 deletes across 3 pages, got {count}"
+        # Verify each list() call asked for the larger page size
+        for call in memory.vector_store.list.call_args_list:
+            assert call.kwargs.get("top_k") == 1000, f"expected top_k=1000, got {call.kwargs}"
+
+    def test_short_page_terminates_pagination(self):
+        """A page shorter than the requested page size signals exhaustion —
+        even when the store returns no offset cursor."""
+        memory = MagicMock()
+        short_page = [MagicMock(id="only-one")]
+        # Single short page, no offset cursor returned
+        memory.vector_store.list.return_value = (short_page, None)
+
+        count = safe_bulk_delete(memory, {"user_id": "tiny-scope"})
+
+        assert count == 1
+        assert memory.vector_store.list.call_count == 1, "should not page past a short page"
+
 
 class TestGetDefaultUserId:
     def test_default(self, monkeypatch):
@@ -196,9 +232,7 @@ class TestSearchWithProject:
 
         for c in mock_mem.search.call_args_list:
             f = c.kwargs["filters"]
-            assert f["user_id"] in ("alice:myproj", "alice"), (
-                f"caller user_id leaked through and overrode project scope: {f}"
-            )
+            assert f["user_id"] in ("alice:myproj", "alice"), f"caller user_id leaked through and overrode project scope: {f}"
             # Non-entity caller filters still pass through
             assert f.get("category") == {"eq": "note"}
 

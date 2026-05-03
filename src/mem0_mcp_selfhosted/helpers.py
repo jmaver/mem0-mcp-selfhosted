@@ -103,10 +103,7 @@ def search_with_project(
     if "user_id" in extra_filters:
         # Project scope is authoritative; ignoring caller-supplied user_id
         # rather than silently letting it cross-scope the search.
-        logger.warning(
-            "search_with_project: ignoring caller-supplied filters['user_id'] "
-            "(project scope is authoritative)"
-        )
+        logger.warning("search_with_project: ignoring caller-supplied filters['user_id'] (project scope is authoritative)")
         extra_filters.pop("user_id")
     for entity_kw in ("agent_id", "run_id"):
         val = kwargs.pop(entity_kw, None)
@@ -172,19 +169,67 @@ def _mem0_call(func: Callable, *args: Any, **kwargs: Any) -> str:
     return json.dumps(result, ensure_ascii=False)
 
 
+_BULK_PAGE_SIZE = 1000
+"""Per-page cap when paginating Qdrant.list() results in safe_bulk_delete and
+the entity-list fallback. Qdrant's default top_k is 100, which silently caps
+"delete all" semantics at 100 records — we explicitly request larger pages
+and loop until the store reports fewer rows than requested (i.e. exhausted)."""
+
+
+def _iter_vector_store_list(memory: Any, filters: dict[str, Any]) -> Any:
+    """Yield every record matching `filters` from the vector store.
+
+    Wraps Qdrant.list() which has a default cap (top_k=100) and would silently
+    truncate large result sets. We page through with offset until the store
+    returns fewer rows than requested.
+    """
+    offset: Any = None
+    while True:
+        kwargs: dict[str, Any] = {"filters": filters, "top_k": _BULK_PAGE_SIZE}
+        if offset is not None:
+            kwargs["offset"] = offset
+        try:
+            result = memory.vector_store.list(**kwargs)
+        except TypeError:
+            # Older Qdrant wrappers may not accept offset; fall back to a
+            # single unpaged page (best effort) and warn that we may be
+            # capping silently.
+            result = memory.vector_store.list(filters=filters, top_k=_BULK_PAGE_SIZE)
+            page = result[0] if isinstance(result, tuple) else result
+            yield from page
+            if len(page) >= _BULK_PAGE_SIZE:
+                logger.warning(
+                    "vector_store.list does not accept offset; results may be capped at %d",
+                    _BULK_PAGE_SIZE,
+                )
+            return
+
+        if isinstance(result, tuple):
+            page, next_offset = result[0], result[1] if len(result) > 1 else None
+        else:
+            page, next_offset = result, None
+
+        yield from page
+
+        # Termination: explicit cursor exhausted, OR page smaller than request
+        if next_offset is None or len(page) < _BULK_PAGE_SIZE:
+            return
+        offset = next_offset
+
+
 def safe_bulk_delete(memory: Any, filters: dict[str, Any]) -> int:
     """Safely delete all memories matching filters.
 
     NEVER calls memory.delete_all() (which triggers vector_store.reset()).
-    Instead: iterate + individual delete.
+    Instead: paginate vector_store.list() in pages of _BULK_PAGE_SIZE and
+    issue an individual delete for each. Pagination is necessary because
+    mem0 v3's Qdrant.list() defaults to top_k=100 — without paging,
+    "delete all" silently capped at 100.
 
-    Returns the count of deleted memories.
+    Returns the total count of successfully deleted memories.
     """
-    result = memory.vector_store.list(filters=filters)
-    memories = result[0] if isinstance(result, tuple) else result
-
     count = 0
-    for item in memories:
+    for item in _iter_vector_store_list(memory, filters):
         memory_id = item.id if hasattr(item, "id") else item.get("id") if isinstance(item, dict) else str(item)
         try:
             memory.delete(memory_id)
@@ -233,11 +278,9 @@ def _list_entities_scroll_fallback(memory: Any) -> dict[str, list[dict]]:
         "run_id": {},
     }
 
-    # mem0 v3: Qdrant.list() takes top_k, not limit (the old kwarg silently
-    # raised TypeError once mem0ai 2.x landed).
-    result = memory.vector_store.list(filters={}, top_k=500)
-    all_memories = result[0] if isinstance(result, tuple) else result
-    for item in all_memories:
+    # mem0 v3: Qdrant.list() defaults top_k=100; page through to avoid
+    # silently capping entity discovery on large collections.
+    for item in _iter_vector_store_list(memory, {}):
         payload = item.payload if hasattr(item, "payload") else item
         if isinstance(payload, dict):
             for key in entities:

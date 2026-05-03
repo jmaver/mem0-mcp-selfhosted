@@ -320,24 +320,22 @@ def _register_tools(mcp: FastMCP) -> None:
     @mcp.tool()
     def delete_all_memories(
         project: Annotated[str, Field(description="Project directory name. Use 'global' for global memories.")],
-        user_id: Annotated[str | None, Field(description="User scope to delete.")] = None,
+        user_id: Annotated[
+            str | None, Field(description="User scope to delete. Defaults to MEM0_USER_ID; the default cannot be left implicit for delete-all (pass 'global' explicitly to wipe global scope).")
+        ] = None,
         agent_id: Annotated[str | None, Field(description="Agent scope to delete.")] = None,
         run_id: Annotated[str | None, Field(description="Run scope to delete.")] = None,
     ) -> str:
-        """Bulk-delete all memories in the given scope. Requires at least one filter.
+        """Bulk-delete all memories in the given (project, user_id, agent_id, run_id) scope.
 
-        NEVER calls memory.delete_all() — uses safe bulk-delete instead.
+        NEVER calls memory.delete_all() — uses safe bulk-delete instead. The
+        scope is always non-empty: project is required, and user_id falls back
+        to MEM0_USER_ID, so this tool always has at least a (user_id, project)
+        scope to delete from. To wipe a different user's scope, pass user_id
+        explicitly.
         """
         uid = make_project_user_id(user_id or get_default_user_id(), project)
-        if not any([uid, agent_id, run_id]):
-            return json.dumps(
-                {"error": "At least one scope (user_id, agent_id, or run_id) is required."},
-                ensure_ascii=False,
-            )
-
-        filters: dict[str, Any] = {}
-        if uid:
-            filters["user_id"] = uid
+        filters: dict[str, Any] = {"user_id": uid}
         if agent_id:
             filters["agent_id"] = agent_id
         if run_id:

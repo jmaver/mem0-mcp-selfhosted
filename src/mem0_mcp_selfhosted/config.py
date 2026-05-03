@@ -6,10 +6,43 @@ mem0ai MemoryConfig dict, and returns provider registration info.
 
 from __future__ import annotations
 
+import logging
+import os
 from typing import Any, TypedDict
 
 from mem0_mcp_selfhosted.auth import resolve_token
 from mem0_mcp_selfhosted.env import bool_env, env, opt_env
+
+logger = logging.getLogger(__name__)
+
+# Env vars that controlled graph memory in v0.3 and earlier. v0.4 removed
+# graph entirely (mem0 v3 has no graph). Warn once at startup so users
+# who upgrade in place without re-reading the changelog see why their
+# graph config is being ignored.
+_LEGACY_GRAPH_ENV_VARS = (
+    "MEM0_ENABLE_GRAPH",
+    "MEM0_NEO4J_URL",
+    "MEM0_NEO4J_USER",
+    "MEM0_NEO4J_PASSWORD",
+    "MEM0_NEO4J_DATABASE",
+    "MEM0_NEO4J_BASE_LABEL",
+    "MEM0_GRAPH_THRESHOLD",
+    "MEM0_GRAPH_LLM_PROVIDER",
+    "MEM0_GRAPH_LLM_URL",
+    "MEM0_GRAPH_LLM_MODEL",
+    "MEM0_GRAPH_CONTRADICTION_LLM_PROVIDER",
+    "MEM0_GRAPH_CONTRADICTION_LLM_MODEL",
+)
+
+
+def _warn_on_legacy_graph_env_vars() -> None:
+    """Log a single warning if any legacy graph env vars are set."""
+    set_vars = [name for name in _LEGACY_GRAPH_ENV_VARS if os.environ.get(name)]
+    if set_vars:
+        logger.warning(
+            "Graph memory was removed in v0.4 (mem0 OSS v3 migration). The following env vars are set but no longer have any effect: %s. See the README v0.4 migration callout.",
+            ", ".join(set_vars),
+        )
 
 
 class ProviderInfo(TypedDict):
@@ -39,6 +72,8 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo]]:
         (config_dict, providers_info) where:
         - providers_info: list of ProviderInfo dicts (name + class_path)
     """
+    _warn_on_legacy_graph_env_vars()
+
     token = resolve_token()
 
     # --- Top-level provider default (cascades to LLM provider when unset) ---

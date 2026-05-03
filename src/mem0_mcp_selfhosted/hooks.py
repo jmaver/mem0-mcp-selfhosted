@@ -39,6 +39,19 @@ _MIN_USER_LEN = 20
 _MIN_ASSISTANT_LEN = 50
 _MAX_CONTENT_LEN = 4000
 _RECENT_WINDOW = 20  # last ~10 exchanges (user+assistant pairs)
+_DEDUP_SIM_THRESHOLD = 0.88  # post-add: if a new memory matches an older one above this, drop the new one
+_MIN_EXCHANGE_LEN = 40  # exchanges shorter than this are filtered as noise (tool narration, pings)
+
+# Phrases that flag a message as transient narration — not worth extracting from.
+_NOISE_PREFIXES = (
+    "let me ",
+    "i'll ",
+    "i will ",
+    "checking ",
+    "looking ",
+    "running ",
+    "let's ",
+)
 
 
 def _get_memory():
@@ -205,6 +218,74 @@ def _extract_content(content) -> str:
     return ""
 
 
+def _is_noise(role: str, content: str) -> bool:
+    """Heuristic filter: drop transient narration before extraction.
+
+    Targets the three dominant low-value patterns in Claude Code transcripts:
+    - very short pings ("ok", "yes", "thanks")
+    - assistant tool-call narration ("Let me check...", "Running tests...")
+    - pure code-fence dumps with no prose context
+    """
+    stripped = content.strip()
+    if len(stripped) < _MIN_EXCHANGE_LEN:
+        return True
+    if role == "assistant":
+        lower = stripped.lower()
+        if any(lower.startswith(p) for p in _NOISE_PREFIXES) and len(stripped) < 200:
+            return True
+        # Pure code block (starts and ends with fence, no surrounding prose)
+        if stripped.startswith("```") and stripped.rstrip().endswith("```"):
+            inner = stripped.strip("`").strip()
+            if "\n" in inner and len(inner) < 600:
+                return True
+    return False
+
+
+def _dedup_against_existing(mem, added_ids: list[str], project_uid: str) -> int:
+    """Delete newly-added memories that semantically duplicate older ones.
+
+    mem0's hash-based dedup catches verbatim duplicates only.  After an add,
+    we re-search each new memory's text against the project scope; if an older
+    memory matches above ``_DEDUP_SIM_THRESHOLD``, we drop the new one.
+    Returns the count of memories deleted.
+    """
+    if not added_ids:
+        return 0
+
+    deleted = 0
+    for mid in added_ids:
+        try:
+            new_mem = mem.get(mid)
+        except Exception:
+            continue
+        if not new_mem:
+            continue
+        text = new_mem.get("memory") or new_mem.get("text") or ""
+        if not text:
+            continue
+        try:
+            results = mem.search(query=text, filters={"user_id": project_uid}, limit=3)
+        except Exception:
+            continue
+        hits = results.get("results", []) if isinstance(results, dict) else results
+        for hit in hits or []:
+            hit_id = hit.get("id")
+            if hit_id == mid:
+                continue
+            score = hit.get("score") or 0.0
+            hit_created = hit.get("created_at", "")
+            new_created = new_mem.get("created_at", "")
+            # Only drop the new one if the match is older (avoid mutual deletion)
+            if score >= _DEDUP_SIM_THRESHOLD and hit_created and hit_created < new_created:
+                try:
+                    mem.delete(mid)
+                    deleted += 1
+                except Exception:
+                    pass
+                break
+    return deleted
+
+
 def _read_recent_messages(transcript_path: str) -> list[tuple[str, str]]:
     """Read recent user/assistant messages from a JSONL transcript.
 
@@ -233,7 +314,7 @@ def _read_recent_messages(transcript_path: str) -> list[tuple[str, str]]:
             if role not in ("user", "assistant"):
                 continue
             content = _extract_content(msg.get("content", ""))[:_MAX_CONTENT_LEN]
-            if content:
+            if content and not _is_noise(role, content):
                 messages.append((role, content))
 
     return list(messages)
@@ -282,9 +363,24 @@ def session_end_main() -> None:
             exchanges.append(f"[{label}]: {content}")
 
         summary = (
-            f"Session summary for project '{project_name}':\n\n" + "\n\n".join(exchanges) + "\n\n"
-            "Extract key decisions, solutions found, patterns discovered, "
-            "configuration changes, and important context for future sessions."
+            f"Session summary for project '{project_name}':\n\n"
+            + "\n\n".join(exchanges)
+            + "\n\n"
+            "Extract ONLY durable knowledge worth recalling in a future session, "
+            "as one memory per fact. Each memory must fit one of these categories:\n"
+            "  - USER: role, expertise, recurring preferences\n"
+            "  - FEEDBACK: corrections or validated approaches the user gave, with the reason\n"
+            "  - PROJECT: architecture decisions, conventions, constraints, deadlines (with motivation)\n"
+            "  - REFERENCE: pointers to external systems, dashboards, repos, channels\n\n"
+            "DO NOT extract:\n"
+            "  - one-time choices (e.g. 'user chose Option 3')\n"
+            "  - in-progress TODOs, action items, or 'next step' notes\n"
+            "  - paths under /tmp, /var/folders, or other ephemeral locations\n"
+            "  - debugging state, error messages being investigated, transient diagnostics\n"
+            "  - session-procedural facts (e.g. 'user needs to relaunch the CLI')\n"
+            "  - facts already obvious from reading the code or git history\n"
+            "  - verbose narration of what was done; only the durable conclusion matters\n\n"
+            "Prefer fewer, higher-signal memories over many shallow ones."
         )
         _log_hook_event("session_end", f"summary length={len(summary)} chars")
 
@@ -298,7 +394,7 @@ def session_end_main() -> None:
         project_uid = make_project_user_id(user_id, project_name)
         _log_hook_event("session_end", f"calling mem.add (user_id={project_uid})...")
 
-        mem.add(
+        add_result = mem.add(
             messages=[{"role": "user", "content": summary}],
             user_id=project_uid,
             infer=True,
@@ -307,6 +403,21 @@ def session_end_main() -> None:
                 "session_id": session_id,
             },
         )
+
+        # Collect IDs of newly-added memories for the post-add dedup pass.
+        events = add_result.get("results", []) if isinstance(add_result, dict) else (add_result or [])
+        added_ids: list[str] = []
+        for e in events:
+            if not isinstance(e, dict) or e.get("event") != "ADD":
+                continue
+            mid = e.get("id")
+            if isinstance(mid, str) and mid:
+                added_ids.append(mid)
+        _log_hook_event("session_end", f"mem.add returned {len(added_ids)} new memories")
+
+        dropped = _dedup_against_existing(mem, added_ids, project_uid)
+        if dropped:
+            _log_hook_event("session_end", f"dedup dropped {dropped}/{len(added_ids)} as semantic duplicates")
 
         _log_hook_event("session_end", f"saved session for project '{project_name}' (user_id={project_uid})")
         _output(_nonfatal())

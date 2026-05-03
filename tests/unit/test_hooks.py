@@ -265,11 +265,19 @@ class TestReadRecentMessages:
     def test_malformed_jsonl_lines_skipped(self, tmp_path):
         """Corrupted lines in transcript are silently skipped."""
         p = tmp_path / "transcript.jsonl"
-        p.write_text('{"role": "user", "content": "first valid message is long enough"}\nTHIS IS NOT JSON\n{"role": "assistant", "content": "second valid response text"}\n{ALSO BROKEN\n')
+        # Content padded to clear the _MIN_EXCHANGE_LEN noise filter.
+        valid_user = "first valid message that is long enough to clear the filter"
+        valid_asst = "second valid response that is also long enough to clear the filter"
+        p.write_text(
+            f'{{"role": "user", "content": "{valid_user}"}}\n'
+            "THIS IS NOT JSON\n"
+            f'{{"role": "assistant", "content": "{valid_asst}"}}\n'
+            "{ALSO BROKEN\n"
+        )
         result = hooks._read_recent_messages(str(p))
         assert len(result) == 2
-        assert result[0] == ("user", "first valid message is long enough")
-        assert result[1] == ("assistant", "second valid response text")
+        assert result[0] == ("user", valid_user)
+        assert result[1] == ("assistant", valid_asst)
 
     def test_empty_file_returns_empty(self, tmp_path):
         """Empty transcript returns empty list."""
@@ -280,50 +288,89 @@ class TestReadRecentMessages:
     def test_returns_recent_window(self, tmp_path):
         """Returns the last _RECENT_WINDOW messages in chronological order."""
         p = tmp_path / "transcript.jsonl"
+        # Content must clear _MIN_EXCHANGE_LEN (noise filter) to exercise window logic.
         lines = [
-            json.dumps({"role": "user", "content": "first user msg"}),
-            json.dumps({"role": "assistant", "content": "first assistant msg"}),
-            json.dumps({"role": "user", "content": "second user msg"}),
-            json.dumps({"role": "assistant", "content": "second assistant msg"}),
+            json.dumps({"role": "user", "content": "first user message with enough length to clear the filter"}),
+            json.dumps({"role": "assistant", "content": "first assistant response with sufficient durable content"}),
+            json.dumps({"role": "user", "content": "second user message with enough length to clear the filter"}),
+            json.dumps({"role": "assistant", "content": "second assistant response with sufficient durable content"}),
         ]
         p.write_text("\n".join(lines))
         result = hooks._read_recent_messages(str(p))
-        # 4 messages fits within _RECENT_WINDOW, so all are returned
         assert len(result) == 4
-        assert result[-1] == ("assistant", "second assistant msg")
-        assert result[-2] == ("user", "second user msg")
+        assert result[-1] == ("assistant", "second assistant response with sufficient durable content")
+        assert result[-2] == ("user", "second user message with enough length to clear the filter")
 
     def test_window_truncates_old_messages(self, tmp_path):
         """Transcripts longer than _RECENT_WINDOW are truncated to recent end."""
         p = tmp_path / "transcript.jsonl"
         total = hooks._RECENT_WINDOW + 10  # always more than the window
         lines = []
+        # Pad each message past _MIN_EXCHANGE_LEN so the noise filter doesn't drop them.
+        pad = "x" * hooks._MIN_EXCHANGE_LEN
         for i in range(total):
             role = "user" if i % 2 == 0 else "assistant"
-            lines.append(json.dumps({"role": role, "content": f"msg {i}"}))
+            lines.append(json.dumps({"role": role, "content": f"msg {i:03d} {pad}"}))
         p.write_text("\n".join(lines))
         result = hooks._read_recent_messages(str(p))
         assert len(result) == hooks._RECENT_WINDOW
-        # Should contain only the last _RECENT_WINDOW messages
         first_kept = total - hooks._RECENT_WINDOW
-        assert result[0][1] == f"msg {first_kept}"
-        assert result[-1][1] == f"msg {total - 1}"
+        assert result[0][1].startswith(f"msg {first_kept:03d}")
+        assert result[-1][1].startswith(f"msg {total - 1:03d}")
 
     def test_skips_non_user_assistant_roles(self, tmp_path):
         """tool_use, tool_result, system roles are excluded from the window."""
         p = tmp_path / "transcript.jsonl"
         lines = [
-            json.dumps({"role": "user", "content": "user request"}),
-            json.dumps({"role": "tool_use", "content": "tool call"}),
-            json.dumps({"role": "tool_result", "content": "tool output"}),
-            json.dumps({"role": "system", "content": "system prompt"}),
-            json.dumps({"role": "assistant", "content": "assistant response"}),
+            json.dumps({"role": "user", "content": "user request that is long enough to pass the noise filter"}),
+            json.dumps({"role": "tool_use", "content": "tool call that is also long enough to pass the filter"}),
+            json.dumps({"role": "tool_result", "content": "tool output that is similarly long enough"}),
+            json.dumps({"role": "system", "content": "system prompt that is also long enough to pass"}),
+            json.dumps({"role": "assistant", "content": "assistant response that is long enough to pass"}),
         ]
         p.write_text("\n".join(lines))
         result = hooks._read_recent_messages(str(p))
         assert len(result) == 2
-        assert result[0] == ("user", "user request")
-        assert result[1] == ("assistant", "assistant response")
+        assert result[0] == ("user", "user request that is long enough to pass the noise filter")
+        assert result[1] == ("assistant", "assistant response that is long enough to pass")
+
+
+# ---------------------------------------------------------------------------
+# _is_noise — pre-filter that drops transient session content before extraction
+# ---------------------------------------------------------------------------
+
+
+class TestIsNoise:
+    def test_short_message_is_noise(self):
+        """Anything below _MIN_EXCHANGE_LEN is dropped regardless of role."""
+        assert hooks._is_noise("user", "ok thanks") is True
+        assert hooks._is_noise("assistant", "done.") is True
+
+    def test_assistant_tool_narration_is_noise(self):
+        """Short assistant messages starting with narration prefixes are dropped."""
+        assert hooks._is_noise("assistant", "Let me check the file structure first.") is True
+        assert hooks._is_noise("assistant", "Running the test suite now to verify.") is True
+        assert hooks._is_noise("assistant", "I'll look at the auth module quickly.") is True
+
+    def test_long_assistant_narration_kept(self):
+        """A 200+ char assistant message is durable enough to keep, even if it starts with narration."""
+        long_msg = "Let me explain the architecture: " + ("the auth layer wraps everything " * 8)
+        assert hooks._is_noise("assistant", long_msg) is False
+
+    def test_user_narration_prefix_not_filtered(self):
+        """User messages aren't subject to narration-prefix filtering — only length."""
+        msg = "let me know when the deploy finishes please thank you very much"
+        assert hooks._is_noise("user", msg) is False
+
+    def test_pure_code_block_is_noise(self):
+        """A short pure code-fence dump with no surrounding prose is dropped."""
+        code = "```python\nprint('hi')\nx = 1\n```"
+        assert hooks._is_noise("assistant", code) is True
+
+    def test_durable_user_message_kept(self):
+        """Realistic user content with project info is preserved."""
+        msg = "we use postgres with prisma in this project, tests run via pytest -v"
+        assert hooks._is_noise("user", msg) is False
 
 
 # ---------------------------------------------------------------------------

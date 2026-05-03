@@ -170,18 +170,14 @@ def _mem0_call(func: Callable, *args: Any, **kwargs: Any) -> str:
 
 
 _BULK_PAGE_SIZE = 1000
-"""Per-page cap when paginating Qdrant.list() results in safe_bulk_delete and
-the entity-list fallback. Qdrant's default top_k is 100, which silently caps
-"delete all" semantics at 100 records — we explicitly request larger pages
-and loop until the store reports fewer rows than requested (i.e. exhausted)."""
 
 
 def _iter_vector_store_list(memory: Any, filters: dict[str, Any]) -> Any:
     """Yield every record matching `filters` from the vector store.
 
-    Wraps Qdrant.list() which has a default cap (top_k=100) and would silently
-    truncate large result sets. We page through with offset until the store
-    returns fewer rows than requested.
+    Qdrant.list() defaults top_k=100, which would silently truncate large
+    result sets — we request larger pages and follow the offset cursor
+    until the store reports fewer rows than requested (i.e. exhausted).
     """
     offset: Any = None
     while True:
@@ -191,17 +187,15 @@ def _iter_vector_store_list(memory: Any, filters: dict[str, Any]) -> Any:
         try:
             result = memory.vector_store.list(**kwargs)
         except TypeError:
-            # Older Qdrant wrappers may not accept offset; fall back to a
-            # single unpaged page (best effort) and warn that we may be
-            # capping silently.
-            result = memory.vector_store.list(filters=filters, top_k=_BULK_PAGE_SIZE)
-            page = result[0] if isinstance(result, tuple) else result
-            yield from page
-            if len(page) >= _BULK_PAGE_SIZE:
-                logger.warning(
-                    "vector_store.list does not accept offset; results may be capped at %d",
-                    _BULK_PAGE_SIZE,
-                )
+            # If the first call (no offset) raised, it's a real signature
+            # incompatibility — surface it. If a subsequent call with offset
+            # raised, the wrapper doesn't support paging; page 1 is already
+            # yielded, so warn and stop rather than re-yielding it.
+            if offset is None:
+                raise
+            logger.warning(
+                "vector_store.list does not accept offset; results past the first page may be missed",
+            )
             return
 
         if isinstance(result, tuple):
@@ -211,32 +205,34 @@ def _iter_vector_store_list(memory: Any, filters: dict[str, Any]) -> Any:
 
         yield from page
 
-        # Termination: explicit cursor exhausted, OR page smaller than request
         if next_offset is None or len(page) < _BULK_PAGE_SIZE:
             return
         offset = next_offset
 
 
+def _extract_id(item: Any) -> str:
+    if hasattr(item, "id"):
+        return item.id
+    if isinstance(item, dict):
+        return item.get("id", "")
+    return str(item)
+
+
 def safe_bulk_delete(memory: Any, filters: dict[str, Any]) -> int:
-    """Safely delete all memories matching filters.
+    """Delete all memories matching filters; iterate+delete individually.
 
-    NEVER calls memory.delete_all() (which triggers vector_store.reset()).
-    Instead: paginate vector_store.list() in pages of _BULK_PAGE_SIZE and
-    issue an individual delete for each. Pagination is necessary because
-    mem0 v3's Qdrant.list() defaults to top_k=100 — without paging,
-    "delete all" silently capped at 100.
-
-    Returns the total count of successfully deleted memories.
+    Never calls memory.delete_all() (which triggers vector_store.reset()).
+    Materializes the full ID list before issuing deletes so the scroll
+    cursor isn't mutated mid-iteration.
     """
+    ids = [_extract_id(item) for item in _iter_vector_store_list(memory, filters)]
     count = 0
-    for item in _iter_vector_store_list(memory, filters):
-        memory_id = item.id if hasattr(item, "id") else item.get("id") if isinstance(item, dict) else str(item)
+    for memory_id in ids:
         try:
             memory.delete(memory_id)
             count += 1
         except Exception as exc:
             logger.warning("Failed to delete memory %s: %s", memory_id, exc)
-
     return count
 
 

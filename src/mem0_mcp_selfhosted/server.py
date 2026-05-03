@@ -320,9 +320,7 @@ def _register_tools(mcp: FastMCP) -> None:
     @mcp.tool()
     def delete_all_memories(
         project: Annotated[str, Field(description="Project directory name. Use 'global' for global memories.")],
-        user_id: Annotated[
-            str | None, Field(description="User scope to delete. Defaults to MEM0_USER_ID; the default cannot be left implicit for delete-all (pass 'global' explicitly to wipe global scope).")
-        ] = None,
+        user_id: Annotated[str | None, Field(description="User scope to delete. Defaults to MEM0_USER_ID.")] = None,
         agent_id: Annotated[str | None, Field(description="Agent scope to delete.")] = None,
         run_id: Annotated[str | None, Field(description="Run scope to delete.")] = None,
     ) -> str:

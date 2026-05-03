@@ -7,7 +7,6 @@ mem0ai MemoryConfig dict, and returns provider registration info.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, TypedDict
 
 from mem0_mcp_selfhosted.auth import resolve_token
@@ -37,7 +36,7 @@ _LEGACY_GRAPH_ENV_VARS = (
 
 def _warn_on_legacy_graph_env_vars() -> None:
     """Log a single warning if any legacy graph env vars are set."""
-    set_vars = [name for name in _LEGACY_GRAPH_ENV_VARS if os.environ.get(name)]
+    set_vars = [name for name in _LEGACY_GRAPH_ENV_VARS if opt_env(name)]
     if set_vars:
         logger.warning(
             "Graph memory was removed in v0.4 (mem0 OSS v3 migration). The following env vars are set but no longer have any effect: %s. See the README v0.4 migration callout.",

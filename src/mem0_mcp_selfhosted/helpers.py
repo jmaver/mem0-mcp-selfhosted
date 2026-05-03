@@ -1,10 +1,10 @@
 """Shared utilities for mem0-mcp-selfhosted.
 
-- patch_graph_sanitizer(): Monkey-patches mem0ai's relationship sanitizer for Neo4j compliance
-- _mem0_call(): Error wrapper for all mem0ai calls
-- call_with_graph(): Concurrency-safe enable_graph toggle
-- safe_bulk_delete(): Iterate + individual delete (never memory.delete_all())
-- get_default_user_id(): Default user_id injection
+- patch_gemini_parse_response(): null-content guard for mem0ai's GeminiLLM
+- _mem0_call(): error wrapper for all mem0ai calls
+- safe_bulk_delete(): iterate + individual delete (never memory.delete_all())
+- get_default_user_id(): default user_id injection
+- make_project_user_id() / search_with_project(): project-scoped memory isolation
 - list_entities_facet(): Qdrant Facet API entity listing with scroll fallback
 """
 
@@ -12,87 +12,11 @@ from __future__ import annotations
 
 import json
 import logging
-import re
-import threading
 from typing import Any, Callable
 
 from mem0_mcp_selfhosted.env import env
 
 logger = logging.getLogger(__name__)
-
-# Valid Neo4j relationship type: must start with a letter or underscore,
-# followed by letters, digits, or underscores.
-_NEO4J_VALID_TYPE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
-
-
-def _make_enhanced_sanitizer(original_fn: Callable[[str], str]) -> Callable[[str], str]:
-    """Wrap mem0ai's sanitize_relationship_for_cypher with Neo4j compliance fixes.
-
-    Fixes two gaps in the upstream sanitizer:
-    1. Hyphens and other ASCII characters not in the char_map
-    2. Leading digits (Neo4j types must start with a letter or underscore)
-
-    The wrapper calls the original first (preserving its 26+ special character
-    mappings), then applies additional fixes.
-    """
-
-    def enhanced(relationship: str) -> str:
-        # Run the original sanitizer first
-        sanitized = original_fn(relationship)
-
-        # Fix: replace hyphens (not in upstream char_map) with underscores
-        sanitized = sanitized.replace("-", "_")
-
-        # Fix: strip any remaining non-alphanumeric/underscore characters
-        sanitized = re.sub(r"[^a-zA-Z0-9_]", "_", sanitized)
-
-        # Collapse consecutive underscores and strip edges
-        sanitized = re.sub(r"_+", "_", sanitized).strip("_")
-
-        # Fix: leading digit → prepend 'rel_' prefix
-        if sanitized and sanitized[0].isdigit():
-            sanitized = "rel_" + sanitized
-
-        # Fallback for empty result
-        if not sanitized:
-            sanitized = "related_to"
-
-        return sanitized
-
-    return enhanced
-
-
-def patch_graph_sanitizer() -> None:
-    """Monkey-patch mem0ai's relationship sanitizer for full Neo4j compliance.
-
-    Must be called AFTER mem0 modules are imported but BEFORE Memory.from_config().
-    Patches both the utils module and the already-imported references in
-    graph_memory/memgraph_memory.
-    """
-    import mem0.memory.utils as utils_module
-
-    original = utils_module.sanitize_relationship_for_cypher
-    enhanced = _make_enhanced_sanitizer(original)
-
-    # Patch the source module
-    utils_module.sanitize_relationship_for_cypher = enhanced
-
-    # Patch already-imported references (from ... import creates local bindings)
-    try:
-        import mem0.memory.graph_memory as graph_module
-
-        graph_module.sanitize_relationship_for_cypher = enhanced
-    except (ImportError, AttributeError):
-        pass
-
-    try:
-        import mem0.memory.memgraph_memory as memgraph_module
-
-        memgraph_module.sanitize_relationship_for_cypher = enhanced
-    except (ImportError, AttributeError):
-        pass
-
-    logger.info("Patched mem0ai relationship sanitizer for Neo4j compliance")
 
 
 def patch_gemini_parse_response() -> None:
@@ -118,7 +42,6 @@ def patch_gemini_parse_response() -> None:
         return
 
     def _safe_parse_response(self, response, *args, **kwargs):  # noqa: ANN001
-        """Guarded _parse_response that handles null content gracefully."""
         if (
             response.candidates
             and response.candidates[0].content is not None
@@ -130,11 +53,6 @@ def patch_gemini_parse_response() -> None:
 
     GeminiLLM._parse_response = _safe_parse_response
     logger.info("Patched GeminiLLM._parse_response for null content guard")
-
-
-# Serializes enable_graph mutation + full Memory method execution.
-# Lock hold time is 2-20 seconds (see PRD §2.4).
-_graph_lock = threading.Lock()
 
 
 PROJECT_GLOBAL = "global"
@@ -172,8 +90,12 @@ def search_with_project(
 
     Results are deduplicated by memory ID, project results first.
     When *project* is None or ``"global"``, searches global only.
+
+    v3 API: entity IDs go inside ``filters`` dict (mem0ai 2.x change).
+    Caller-supplied ``filters`` is merged with the user_id filter.
     """
     limit = kwargs.pop("limit", 15)
+    extra_filters = kwargs.pop("filters", None) or {}
     seen: set[str] = set()
     merged: list[dict] = []
 
@@ -193,13 +115,13 @@ def search_with_project(
         return []
 
     if project and project != PROJECT_GLOBAL:
-        # Project-scoped search
         project_uid = make_project_user_id(user_id, project)
-        raw = mem.search(query=query, user_id=project_uid, limit=limit, **kwargs)
+        filters = {"user_id": project_uid, **extra_filters}
+        raw = mem.search(query=query, filters=filters, limit=limit, **kwargs)
         _collect(_extract(raw), "project")
 
-    # Global search
-    raw = mem.search(query=query, user_id=user_id, limit=limit, **kwargs)
+    filters = {"user_id": user_id, **extra_filters}
+    raw = mem.search(query=query, filters=filters, limit=limit, **kwargs)
     _collect(_extract(raw), "global")
 
     return merged
@@ -213,7 +135,6 @@ def _mem0_call(func: Callable, *args: Any, **kwargs: Any) -> str:
     try:
         result = func(*args, **kwargs)
     except Exception as exc:
-        # Check if it's a MemoryError (imported lazily to avoid import issues)
         exc_type = type(exc).__name__
         is_memory_error = any(
             cls.__name__ == "MemoryError" for cls in type(exc).__mro__
@@ -229,75 +150,33 @@ def _mem0_call(func: Callable, *args: Any, **kwargs: Any) -> str:
                 },
                 ensure_ascii=False,
             )
-        else:
-            logger.error("Unexpected error: %s", exc)
-            return json.dumps(
-                {
-                    "error": exc_type,
-                    "detail": str(exc),
-                },
-                ensure_ascii=False,
-            )
+        logger.error("Unexpected error: %s", exc)
+        return json.dumps(
+            {"error": exc_type, "detail": str(exc)},
+            ensure_ascii=False,
+        )
     return json.dumps(result, ensure_ascii=False)
 
 
-def call_with_graph(
-    memory: Any,
-    enable_graph: bool | None,
-    default_graph: bool,
-    func: Callable,
-    *args: Any,
-    **kwargs: Any,
-) -> Any:
-    """Execute a Memory method with per-request enable_graph context.
-
-    Each tool call resolves its own effective enable_graph value and passes
-    it here. The lock ensures no concurrent request can observe a stale flag.
-
-    IMPORTANT: The lock is held for the full duration of func() (2-20s),
-    because Memory.add() blocks on concurrent.futures.wait() internally.
-    """
-    if memory is None:
-        raise RuntimeError("Memory not initialized. Infrastructure may be unavailable.")
-    effective = enable_graph if enable_graph is not None else default_graph
-    with _graph_lock:
-        memory.enable_graph = effective and memory.graph is not None
-        return func(*args, **kwargs)
-
-
-def safe_bulk_delete(memory: Any, filters: dict[str, Any], *, graph_enabled: bool = False) -> int:
+def safe_bulk_delete(memory: Any, filters: dict[str, Any]) -> int:
     """Safely delete all memories matching filters.
 
     NEVER calls memory.delete_all() (which triggers vector_store.reset()).
-    Instead: iterate + individual delete + mandatory graph cleanup.
-
-    Args:
-        graph_enabled: Explicit graph state from caller (avoids reading
-            mutable ``memory.enable_graph`` which races with ``call_with_graph``).
+    Instead: iterate + individual delete.
 
     Returns the count of deleted memories.
     """
-    # Get all memories matching the filters
-    # Qdrant.list() returns raw scroll result: (records, next_page_offset)
     result = memory.vector_store.list(filters=filters)
     memories = result[0] if isinstance(result, tuple) else result
 
     count = 0
     for item in memories:
-        # Extract memory_id from the Qdrant point
         memory_id = item.id if hasattr(item, "id") else item.get("id") if isinstance(item, dict) else str(item)
         try:
             memory.delete(memory_id)
             count += 1
         except Exception as exc:
             logger.warning("Failed to delete memory %s: %s", memory_id, exc)
-
-    # Mandatory graph cleanup — memory.delete() does NOT clean Neo4j (GitHub #3245)
-    if graph_enabled and hasattr(memory, "graph") and memory.graph is not None:
-        try:
-            memory.graph.delete_all(filters)
-        except Exception as exc:
-            logger.warning("Graph cleanup failed for filters %s: %s", filters, exc)
 
     return count
 
@@ -328,7 +207,6 @@ def list_entities_facet(memory: Any) -> dict[str, list[dict]]:
             ]
         return result
     except Exception as exc:
-        # Facet API unavailable — fall back to scroll+dedupe
         logger.warning(
             "Qdrant Facet API unavailable (%s). Falling back to scroll+dedupe. "
             "Upgrade to Qdrant v1.12+ for better performance.",
@@ -345,8 +223,6 @@ def _list_entities_scroll_fallback(memory: Any) -> dict[str, list[dict]]:
         "run_id": {},
     }
 
-    # Scroll through all memories in batches
-    # Qdrant.list() returns raw scroll result: (records, next_page_offset)
     result = memory.vector_store.list(filters={}, limit=500)
     all_memories = result[0] if isinstance(result, tuple) else result
     for item in all_memories:

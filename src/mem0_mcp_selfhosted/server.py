@@ -3,7 +3,7 @@
 Orchestrates: tool registration → transport → lazy Memory init on first call.
 Memory initialization is deferred to the first tool invocation via _ensure_memory(),
 allowing the server to respond to MCP initialize/tools/list without live infrastructure.
-All 11 MCP tools + memory_assistant prompt.
+All 9 MCP tools + memory_assistant prompt.
 """
 
 from __future__ import annotations
@@ -19,17 +19,14 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
 from mem0_mcp_selfhosted.config import ProviderInfo, build_config
-from mem0_mcp_selfhosted.env import bool_env, env
-from mem0_mcp_selfhosted.graph_tools import get_entity, search_graph
+from mem0_mcp_selfhosted.env import env
 from mem0_mcp_selfhosted.helpers import (
     PROJECT_GLOBAL,
     _mem0_call,
-    call_with_graph,
     get_default_user_id,
     list_entities_facet,
     make_project_user_id,
     patch_gemini_parse_response,
-    patch_graph_sanitizer,
     safe_bulk_delete,
     search_with_project,
 )
@@ -39,7 +36,6 @@ logger = logging.getLogger(__name__)
 # --- Globals set during startup ---
 memory = None
 mcp: FastMCP | None = None
-_enable_graph_default = False
 
 # --- Lazy init state ---
 _memory_init_lock = threading.Lock()
@@ -95,29 +91,18 @@ def _resolve_config_class(provider_name: str) -> type | None:
 
 def _init_memory() -> Any:
     """Initialize mem0ai Memory with config and registered providers."""
-    global memory, _enable_graph_default
+    global memory
 
-    config_dict, providers_info, split_config = build_config()
+    config_dict, providers_info = build_config()
 
     register_providers(providers_info)
 
-    # Patch mem0ai's relationship sanitizer before Memory init
-    patch_graph_sanitizer()
     patch_gemini_parse_response()
 
     # Initialize Memory
     from mem0 import Memory
 
     memory = Memory.from_config(config_dict)
-
-    # If split-model was requested, swap the graph LLM with the router
-    if split_config and memory.graph is not None:
-        from mem0_mcp_selfhosted.llm_router import SplitModelGraphLLM, SplitModelGraphLLMConfig
-
-        router_config = SplitModelGraphLLMConfig(**split_config)
-        memory.graph.llm = SplitModelGraphLLM(router_config)
-
-    _enable_graph_default = bool_env("MEM0_ENABLE_GRAPH")
     return memory
 
 
@@ -171,7 +156,6 @@ def _create_server() -> FastMCP:
             "Use search_memories to find relevant context before starting work. "
             "Use add_memory to store important facts, preferences, and decisions. "
             "Use get_memories to browse stored memories with filters. "
-            "Use search_graph to find relationships between entities. "
             "Use get_memory to retrieve a specific memory by ID. "
             "Use update_memory to modify existing memories. "
             "Use list_entities to see who/what has stored memories."
@@ -190,7 +174,7 @@ def _create_server() -> FastMCP:
 
 
 def _register_tools(mcp: FastMCP) -> None:
-    """Register all 11 MCP tools on the server."""
+    """Register all 9 MCP tools on the server."""
 
     @mcp.tool()
     def add_memory(
@@ -202,7 +186,6 @@ def _register_tools(mcp: FastMCP) -> None:
         run_id: Annotated[str | None, Field(description="Run scope identifier.")] = None,
         metadata: Annotated[dict | None, Field(description="Arbitrary metadata JSON to store alongside the memory.")] = None,
         infer: Annotated[bool | None, Field(description="If true (default), LLM extracts key facts. If false, stores raw text.")] = None,
-        enable_graph: Annotated[bool | None, Field(description="Override default graph toggle for this call.")] = None,
     ) -> str:
         """Store a new memory. Requires at least one of user_id, agent_id, or run_id."""
         uid = make_project_user_id(user_id or get_default_user_id(), project)
@@ -228,7 +211,9 @@ def _register_tools(mcp: FastMCP) -> None:
         def _do_add():
             return mem.add(msgs, **kwargs)
 
-        return _mem0_call(call_with_graph, mem, enable_graph, _enable_graph_default, _do_add)
+        if mem is None:
+            return json.dumps({"error": "Memory not initialized", "detail": "Infrastructure may be unavailable."}, ensure_ascii=False)
+        return _mem0_call(_do_add)
 
     @mcp.tool()
     def search_memories(
@@ -241,7 +226,6 @@ def _register_tools(mcp: FastMCP) -> None:
         limit: Annotated[int | None, Field(description="Maximum number of results.")] = None,
         threshold: Annotated[float | None, Field(description="Minimum relevance score (0.0-1.0).")] = None,
         rerank: Annotated[bool | None, Field(description="Whether to apply reranking.")] = None,
-        enable_graph: Annotated[bool | None, Field(description="Override default graph toggle.")] = None,
     ) -> str:
         """Semantic search across existing memories. Searches project-scoped + global memories."""
         uid = user_id or get_default_user_id()
@@ -264,7 +248,9 @@ def _register_tools(mcp: FastMCP) -> None:
         def _do_search():
             return search_with_project(mem, query, uid, project, **search_kwargs)
 
-        return _mem0_call(call_with_graph, mem, enable_graph, _enable_graph_default, _do_search)
+        if mem is None:
+            return json.dumps({"error": "Memory not initialized", "detail": "Infrastructure may be unavailable."}, ensure_ascii=False)
+        return _mem0_call(_do_search)
 
     @mcp.tool()
     def get_memories(
@@ -362,7 +348,7 @@ def _register_tools(mcp: FastMCP) -> None:
             return json.dumps({"error": "Memory not initialized", "detail": "Infrastructure may be unavailable."}, ensure_ascii=False)
 
         def _do_bulk_delete():
-            count = safe_bulk_delete(mem, filters, graph_enabled=_enable_graph_default)
+            count = safe_bulk_delete(mem, filters)
             return {"message": f"Deleted {count} memories.", "count": count}
 
         return _mem0_call(_do_bulk_delete)
@@ -416,28 +402,10 @@ def _register_tools(mcp: FastMCP) -> None:
             return json.dumps({"error": "Memory not initialized", "detail": "Infrastructure may be unavailable."}, ensure_ascii=False)
 
         def _do_delete_entity():
-            count = safe_bulk_delete(mem, filters, graph_enabled=_enable_graph_default)
+            count = safe_bulk_delete(mem, filters)
             return {"message": f"Entity deleted. Removed {count} memories.", "count": count}
 
         return _mem0_call(_do_delete_entity)
-
-    # ============================================================
-    # Direct Neo4j Graph Tools
-    # ============================================================
-
-    @mcp.tool()
-    def mcp_search_graph(
-        query: Annotated[str, Field(description="Entity or topic to search for (e.g., 'Python', 'TypeScript').")],
-    ) -> str:
-        """Search entities by name/id substring matching in Neo4j knowledge graph."""
-        return search_graph(query)
-
-    @mcp.tool()
-    def mcp_get_entity(
-        name: Annotated[str, Field(description="Exact entity name to look up.")],
-    ) -> str:
-        """Get all relationships for a specific entity (bidirectional)."""
-        return get_entity(name)
 
 
 # ============================================================
@@ -457,8 +425,7 @@ def _register_prompts(mcp: FastMCP) -> None:
             "1. Store memories: Use add_memory with project=<directory name> to save facts\n"
             "2. Search memories: Use search_memories with project=<directory name> for semantic queries\n"
             "3. Browse memories: Use get_memories with project=<directory name> for filtered listing\n"
-            "4. Update/Delete: Use update_memory and delete_memory for modifications\n"
-            "5. Graph exploration: Use search_graph and get_entity for entity relationships\n\n"
+            "4. Update/Delete: Use update_memory and delete_memory for modifications\n\n"
             "Project Scoping:\n"
             "- Always pass project=<current directory name> (e.g. 'my-app')\n"
             "- Memories are scoped per project — each project has its own memory space\n"
@@ -466,7 +433,6 @@ def _register_prompts(mcp: FastMCP) -> None:
             "- search_memories automatically returns both project-scoped and global results\n\n"
             "Tips:\n"
             "- user_id is automatically injected from MEM0_USER_ID default\n"
-            "- Set enable_graph=true to include knowledge graph results\n"
             "- Use infer=false to store raw text without LLM extraction\n"
             "- Use threshold on search_memories to filter by relevance score\n"
             "- Use filters for structured queries: {\"key\": {\"eq\": \"value\"}}\n"

@@ -8,7 +8,7 @@ incompatibility — Ollama issues #10538, #10929, #10976).
 Defense layers (applied in order):
   1. /no_think injection — suppresses qwen3 thinking tokens before API call
   2. temperature=0, repeat_penalty=1.0 — deterministic structured output
-  3. keep_alive — prevents model unload between sequential graph pipeline calls
+  3. keep_alive — prevents model unload between sequential extraction calls
   4. Think-tag stripping — removes leaked <think> blocks from response content
   5. extract_json() — strips code fences / text prefixes from JSON responses
   6. Single retry — retries once on empty or invalid JSON

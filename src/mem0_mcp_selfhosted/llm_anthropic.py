@@ -357,7 +357,7 @@ class AnthropicOATLLM(LLMBase):
 
     @staticmethod
     def _parse_response(response: anthropic.types.Message) -> dict:
-        """Convert Anthropic tool_use blocks to dict format for graph_memory.py.
+        """Convert Anthropic tool_use blocks to dict format expected by mem0ai.
 
         Returns: {"content": "...", "tool_calls": [{"name": ..., "arguments": ...}]}
         """

@@ -65,9 +65,12 @@ def seeded_memory(hook_memory):
 
     memory_ids = []
     for fact in facts:
+        # v3 Memory.add() still takes user_id as a top-level kwarg (write path
+        # contract is unchanged); only the search/get_all read paths moved
+        # entity IDs into the filters dict.
         result = hook_memory.add(
             [{"role": "user", "content": fact}],
-            filters={"user_id": user_id},
+            user_id=user_id,
         )
         for r in result.get("results", []):
             memory_ids.append(r["id"])

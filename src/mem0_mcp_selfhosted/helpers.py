@@ -91,13 +91,23 @@ def search_with_project(
     the ``filters`` dict — mem0 2.x ``Memory.search`` rejects them as top-level
     kwargs. ``agent_id`` and ``run_id`` accepted here as kwargs are auto-folded
     into ``filters`` so callers don't have to re-encode the v3 contract.
-    Caller-supplied ``filters`` is merged with these.
+    Caller-supplied ``filters`` is merged with these — but a ``user_id`` value
+    inside caller filters is dropped: it would otherwise override the project /
+    global scope this function computed and break project isolation.
     """
     # v3 renamed `limit` to `top_k`; accept either at the helper boundary so
     # callers that still pass `limit=` don't silently fall through to the
     # mem0 default of 20 (Memory.search swallows unknown kwargs).
     top_k = kwargs.pop("top_k", kwargs.pop("limit", 15))
     extra_filters = dict(kwargs.pop("filters", None) or {})
+    if "user_id" in extra_filters:
+        # Project scope is authoritative; ignoring caller-supplied user_id
+        # rather than silently letting it cross-scope the search.
+        logger.warning(
+            "search_with_project: ignoring caller-supplied filters['user_id'] "
+            "(project scope is authoritative)"
+        )
+        extra_filters.pop("user_id")
     for entity_kw in ("agent_id", "run_id"):
         val = kwargs.pop(entity_kw, None)
         if val:
@@ -223,7 +233,9 @@ def _list_entities_scroll_fallback(memory: Any) -> dict[str, list[dict]]:
         "run_id": {},
     }
 
-    result = memory.vector_store.list(filters={}, limit=500)
+    # mem0 v3: Qdrant.list() takes top_k, not limit (the old kwarg silently
+    # raised TypeError once mem0ai 2.x landed).
+    result = memory.vector_store.list(filters={}, top_k=500)
     all_memories = result[0] if isinstance(result, tuple) else result
     for item in all_memories:
         payload = item.payload if hasattr(item, "payload") else item

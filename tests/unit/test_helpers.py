@@ -177,6 +177,31 @@ class TestSearchWithProject:
         second_call = mock_mem.search.call_args_list[1]
         assert second_call.kwargs["filters"]["user_id"] == "alice"
 
+    def test_caller_supplied_user_id_in_filters_is_dropped(self):
+        """Project scope is authoritative — caller-supplied filters['user_id'] must NOT cross-scope the search.
+
+        Regression: prior to this fix, ``search_memories(project="foo", filters={"user_id": "other"})``
+        would query 'other' instead of 'foo', breaking project isolation.
+        """
+        mock_mem = MagicMock()
+        mock_mem.search.return_value = {"results": []}
+
+        search_with_project(
+            mock_mem,
+            "q",
+            "alice",
+            "myproj",
+            filters={"user_id": "attacker", "category": {"eq": "note"}},
+        )
+
+        for c in mock_mem.search.call_args_list:
+            f = c.kwargs["filters"]
+            assert f["user_id"] in ("alice:myproj", "alice"), (
+                f"caller user_id leaked through and overrode project scope: {f}"
+            )
+            # Non-entity caller filters still pass through
+            assert f.get("category") == {"eq": "note"}
+
     def test_global_project_runs_single_search(self):
         """project='global' runs only one search (no project-scoped call)."""
         mock_mem = MagicMock()
@@ -355,3 +380,20 @@ class TestPatchGeminiParseResponse:
 
             result = patched_method(MagicMock(), response)
             assert result == ""
+
+
+class TestListEntitiesScrollFallback:
+    """v3 contract: Qdrant.list() takes top_k, not limit."""
+
+    def test_scroll_fallback_uses_top_k(self):
+        """Regression: prior to v3 fix this called limit=500 → TypeError on mem0ai 2.x."""
+        from mem0_mcp_selfhosted.helpers import _list_entities_scroll_fallback
+
+        mock_mem = MagicMock()
+        mock_mem.vector_store.list.return_value = ([], None)
+
+        _list_entities_scroll_fallback(mock_mem)
+
+        call = mock_mem.vector_store.list.call_args
+        assert "top_k" in call.kwargs, "v3 Qdrant.list() requires top_k= kwarg"
+        assert "limit" not in call.kwargs, "v3 Qdrant.list() does not accept limit="

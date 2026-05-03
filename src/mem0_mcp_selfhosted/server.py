@@ -223,9 +223,12 @@ def _register_tools(mcp: FastMCP) -> None:
         threshold: Annotated[float | None, Field(description="Minimum relevance score (0.0-1.0).")] = None,
         rerank: Annotated[bool | None, Field(description="Whether to apply reranking.")] = None,
     ) -> str:
-        """Semantic search across existing memories. Searches project-scoped + global memories."""
+        """Hybrid search across existing memories. Searches project-scoped + global memories."""
         uid = user_id or get_default_user_id()
 
+        # search_with_project folds agent_id, run_id, and any caller-supplied
+        # filters into the v3 filters dict centrally, so we just pass them as
+        # kwargs and the helper does the v3 contract translation.
         search_kwargs: dict[str, Any] = {}
         if agent_id:
             search_kwargs["agent_id"] = agent_id
@@ -234,7 +237,7 @@ def _register_tools(mcp: FastMCP) -> None:
         if filters:
             search_kwargs["filters"] = filters
         if limit is not None:
-            search_kwargs["limit"] = limit
+            search_kwargs["top_k"] = limit
         if threshold is not None:
             search_kwargs["threshold"] = threshold
         if rerank is not None:
@@ -256,13 +259,17 @@ def _register_tools(mcp: FastMCP) -> None:
         """Page through memories for a specific project scope."""
         uid = make_project_user_id(user_id or get_default_user_id(), project)
 
-        kwargs: dict[str, Any] = {"user_id": uid}
+        # v3: Memory.get_all takes entity IDs inside filters dict and uses top_k
+        # (not limit). Top-level user_id/agent_id/run_id are silently ignored.
+        filters: dict[str, Any] = {"user_id": uid}
         if agent_id:
-            kwargs["agent_id"] = agent_id
+            filters["agent_id"] = agent_id
         if run_id:
-            kwargs["run_id"] = run_id
+            filters["run_id"] = run_id
+
+        kwargs: dict[str, Any] = {"filters": filters}
         if limit is not None:
-            kwargs["limit"] = limit
+            kwargs["top_k"] = limit
 
         mem = _ensure_memory()
         if mem is None:

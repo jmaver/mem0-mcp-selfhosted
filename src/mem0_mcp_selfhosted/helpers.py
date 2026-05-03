@@ -91,11 +91,21 @@ def search_with_project(
     Results are deduplicated by memory ID, project results first.
     When *project* is None or ``"global"``, searches global only.
 
-    v3 API: entity IDs go inside ``filters`` dict (mem0ai 2.x change).
-    Caller-supplied ``filters`` is merged with the user_id filter.
+    v3 API: ALL entity IDs (``user_id``, ``agent_id``, ``run_id``) go inside
+    the ``filters`` dict — mem0 2.x ``Memory.search`` rejects them as top-level
+    kwargs. ``agent_id`` and ``run_id`` accepted here as kwargs are auto-folded
+    into ``filters`` so callers don't have to re-encode the v3 contract.
+    Caller-supplied ``filters`` is merged with these.
     """
-    limit = kwargs.pop("limit", 15)
-    extra_filters = kwargs.pop("filters", None) or {}
+    # v3 renamed `limit` to `top_k`; accept either at the helper boundary so
+    # callers that still pass `limit=` don't silently fall through to the
+    # mem0 default of 20 (Memory.search swallows unknown kwargs).
+    top_k = kwargs.pop("top_k", kwargs.pop("limit", 15))
+    extra_filters = dict(kwargs.pop("filters", None) or {})
+    for entity_kw in ("agent_id", "run_id"):
+        val = kwargs.pop(entity_kw, None)
+        if val:
+            extra_filters[entity_kw] = val
     seen: set[str] = set()
     merged: list[dict] = []
 
@@ -117,11 +127,11 @@ def search_with_project(
     if project and project != PROJECT_GLOBAL:
         project_uid = make_project_user_id(user_id, project)
         filters = {"user_id": project_uid, **extra_filters}
-        raw = mem.search(query=query, filters=filters, limit=limit, **kwargs)
+        raw = mem.search(query=query, filters=filters, top_k=top_k, **kwargs)
         _collect(_extract(raw), "project")
 
     filters = {"user_id": user_id, **extra_filters}
-    raw = mem.search(query=query, filters=filters, limit=limit, **kwargs)
+    raw = mem.search(query=query, filters=filters, top_k=top_k, **kwargs)
     _collect(_extract(raw), "global")
 
     return merged

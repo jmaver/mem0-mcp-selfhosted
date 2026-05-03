@@ -62,6 +62,15 @@ line-length = 200
 # registered as side effects. Same for the `memory_assistant` MCP prompt.
 "src/mem0_mcp_selfhosted/server.py" = ["F811"]
 
+[tool.pyright]
+# Benchmark scripts predate the v3 migration and reference removed modules
+# (graph_tools, llm_router, Memory.graph). They will fail at runtime — keep
+# them out of type-checking until they are rewritten or deleted.
+exclude = [
+    "benchmarks",
+    ".venv",
+]
+
 [tool.semantic_release]
 version_toml = ["pyproject.toml:project.version"]
 version_variables = ["src/mem0_mcp_selfhosted/__init__.py:__version__"]

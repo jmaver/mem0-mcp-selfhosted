@@ -63,11 +63,7 @@ line-length = 200
 "src/mem0_mcp_selfhosted/server.py" = ["F811"]
 
 [tool.pyright]
-# Benchmark scripts predate the v3 migration and reference removed modules
-# (graph_tools, llm_router, Memory.graph). They will fail at runtime — keep
-# them out of type-checking until they are rewritten or deleted.
 exclude = [
-    "benchmarks",
     ".venv",
 ]
 

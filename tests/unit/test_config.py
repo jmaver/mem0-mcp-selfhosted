@@ -134,10 +134,10 @@ class TestBuildConfig:
         assert "max_tokens" not in llm_cfg
 
     def test_ollama_default_model(self):
-        """Ollama provider defaults to qwen3:14b when MEM0_LLM_MODEL not set."""
+        """Ollama provider defaults to qwen3.5:4b when MEM0_LLM_MODEL not set."""
         env = {"MEM0_LLM_PROVIDER": "ollama"}
         config_dict, *_ = self._build_with_env(env)
-        assert config_dict["llm"]["config"]["model"] == "qwen3:14b"
+        assert config_dict["llm"]["config"]["model"] == "qwen3.5:4b"
 
     def test_ollama_llm_url_custom(self):
         """MEM0_LLM_URL sets ollama_base_url when provider is ollama."""

@@ -53,7 +53,7 @@ For a fully local setup with no cloud dependencies, use Ollama for both the main
 ```bash
 claude mcp add --scope user --transport stdio mem0 \
   --env MEM0_PROVIDER=ollama \
-  --env MEM0_LLM_MODEL=qwen3:14b \
+  --env MEM0_LLM_MODEL=qwen3.5:4b \
   --env MEM0_USER_ID=your-user-id \
   -- uvx --from git+https://github.com/elvismdev/mem0-mcp-selfhosted.git mem0-mcp-selfhosted
 ```
@@ -70,7 +70,7 @@ Or add it to a single project by creating `.mcp.json` in the project root:
       "args": ["--from", "git+https://github.com/elvismdev/mem0-mcp-selfhosted.git", "mem0-mcp-selfhosted"],
       "env": {
         "MEM0_PROVIDER": "ollama",
-        "MEM0_LLM_MODEL": "qwen3:14b",
+        "MEM0_LLM_MODEL": "qwen3.5:4b",
         "MEM0_USER_ID": "your-user-id"
       }
     }
@@ -248,7 +248,7 @@ All configuration is via environment variables. Create a `.env` file or set them
 | `MEM0_PROVIDER` | `anthropic` | Top-level provider (`anthropic` or `ollama`). Cascades to `MEM0_LLM_PROVIDER` when not set. Does **not** affect `MEM0_EMBED_PROVIDER`. |
 | `MEM0_LLM_PROVIDER` | _(MEM0_PROVIDER)_ | Main LLM provider: `anthropic` or `ollama`. Inherits from `MEM0_PROVIDER` when not set. |
 | `MEM0_OLLAMA_URL` | `http://localhost:11434` | Shared Ollama base URL. Cascades to `MEM0_LLM_URL` and `MEM0_EMBED_URL` when those are not set. |
-| `MEM0_LLM_MODEL` | _(per-provider)_ | Model for the selected LLM provider. Defaults to `claude-opus-4-6` for Anthropic, `qwen3:14b` for Ollama |
+| `MEM0_LLM_MODEL` | _(per-provider)_ | Model for the selected LLM provider. Defaults to `claude-opus-4-6` for Anthropic, `qwen3.5:4b` for Ollama |
 | `MEM0_LLM_URL` | _(cascades)_ | Ollama base URL for the main LLM. Cascades: `MEM0_LLM_URL` → `MEM0_OLLAMA_URL` → `http://localhost:11434`. Only used when `MEM0_LLM_PROVIDER=ollama` |
 | `MEM0_LLM_MAX_TOKENS` | `16384` | Max tokens for LLM responses (Anthropic only) |
 | `MEM0_OLLAMA_KEEP_ALIVE` | `30m` | How long Ollama keeps the model in VRAM between calls (e.g., `1h`, `5m`). Prevents model unload between sequential extraction calls |

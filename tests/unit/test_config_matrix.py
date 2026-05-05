@@ -80,7 +80,7 @@ class TestDefaultModelAcrossMatrix:
         "llm_provider,expected_model",
         [
             ("anthropic", "claude-opus-4-6"),
-            ("ollama", "qwen3:14b"),
+            ("ollama", "qwen3.5:4b"),
         ],
     )
     @patch("mem0_mcp_selfhosted.config.resolve_token", return_value="sk-ant-api-fake")

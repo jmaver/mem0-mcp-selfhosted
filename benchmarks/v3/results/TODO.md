@@ -1,49 +1,24 @@
 # Outstanding work — v3 benchmarks + provider matrix
 
-Updated 2026-05-05. Most of the original list landed in this session; what
-remains is corpus expansion (lower priority) and one default-config flip
-that's deliberately gated on a larger N.
+Updated 2026-05-05 (second pass). All previously deferred items now
+landed. Remaining work is verification: re-run the bench suite with the
+expanded corpora to see if the ceiling-saturation problem is gone.
 
 ## Still open
 
-### Corpus expansion (TODO #8 — original)
-`retrieval_quality.py` saturated at recall@5=1.0 on both arms with the
-current 18-fact corpus. The same ceiling problem applies to the extraction
-corpus (5 cases, mostly easy; cloud legs hit F1=1.0). Build a corpus with:
+### Re-run benches with expanded corpora
+Corpus expansion landed (100 facts / 30 queries / 30 extraction cases) but
+the bench has not been re-run against it. Until that runs, we don't know
+whether the hybrid-vs-semantic gap is now detectable, or whether
+`anthropic-api` extraction F1 falls below 1.0 on the harder cases. The run
+itself is mechanical — `benchmarks/bench_all.sh` is the wrapper.
 
-- ~100 facts across 5 thematic clusters with semantic confusables within
-  each cluster
-- Mix of keyword-match queries (where BM25 should win), semantic-match
-  queries (where embeddings should win), and entity-match queries (where
-  the entity-boost path should win)
-- ~30 queries total with hand-labeled relevant fact IDs
-- For extraction: ~30 cases skewed harder (multi-fact prompts,
-  contradictions, entities with overlapping aliases) so the schema-vs-no-
-  schema effect is detectable.
-
-Without this, the hybrid-vs-semantic comparison and the schema-shape
-verdict can't move beyond "ceiling reached."
-
-### Profile the `session_end` cold-start (TODO #7 — original)
-Baseline run had `session_end` exceed the 30 s budget in 2/3 cold-start
-iterations. Hasn't been investigated. Add `cProfile` or
-`time.perf_counter()` checkpoints to the SessionEnd hook to break down:
-
-- mem0 import (~?ms)
-- spaCy `en_core_web_sm` load (~?ms)
-- Memory init + Qdrant client + first embed (~?ms)
-- Extraction LLM call (~?ms)
-
-Now that we know cloud extraction is 2-5 s and local is 15-30 s, init cost
-must dominate the remaining ~25 s of the 30 s budget. Likely candidates:
-spaCy load, Qdrant collection check, first embedder warm-up.
-
-### Switch v3's default Ollama model (TODO #9 — original)
-`config.py:89` has `"ollama": "qwen3:14b"` but two N=5 runs agree that
-`qwen3.5:4b` beats it on extraction quality (1.0 vs 0.9 F1) at the same
-backend, while being 3.5× smaller. Single-line change. Deliberately
-deferred until the larger corpus (above) lands so the default flip rests
-on a stronger statistical footing.
+### Sub-checkpoint `_get_memory()` for tighter init breakdown
+The session_end profile localized 4–5 s to `memory_init` but couldn't
+isolate which sub-phase (mem0 import / spaCy load / Qdrant init / first
+embed). Add the same `time.perf_counter()` pattern inside `_get_memory()`
+in `hooks.py` if init cost ever needs targeted optimization. Low priority
+while `mem_add` dominates at 13 s mean.
 
 ## What landed in this session
 
@@ -70,6 +45,20 @@ on a stronger statistical footing.
 - ✅ TODO #13 — Project-scoping contract test added at
   `tests/contract/test_project_scoping_contract.py`.
 - ✅ TODO #14 — Dead `_fuzzy_match_any` removed from `framework.py`.
+- ✅ TODO #7 (original) — `session_end` cold-start profiled. `mem_add`
+  (Ollama LLM call) dominates at 13.4 s mean (73 % of total); `memory_init`
+  is 4.7 s (26 %); everything else is &lt;1 s. See
+  `2026-05-05-session-end-profile.md`. The ~30.9 s prior p50 was Ollama
+  queue load, not init cost.
+- ✅ TODO #8 (original) — Corpora expanded. `_corpora.py`
+  `FACT_EXTRACTION_CASES` 20 → 30 (10 hard / adversarial: contradictions,
+  negation traps, alias resolution, hedged statements, density traps).
+  `retrieval_quality.py` 18 facts → 100 across 5 thematic clusters; 12
+  queries → 30 with multi-relevant labels.
+- ✅ TODO #9 (original) — Default Ollama model flipped from `qwen3:14b` to
+  `qwen3.5:4b` in `config.py:89`. Cascading updates in 3 unit tests,
+  README.md, benchmarks/README.md, and `provider_battle.py` benchmark
+  fallback default. Historical bench results files left untouched.
 
 ## What's been done already (for context if you re-orient)
 

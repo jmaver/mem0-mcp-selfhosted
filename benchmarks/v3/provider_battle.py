@@ -68,7 +68,7 @@ def _default_model(provider: str) -> str | None:
     if provider == "anthropic":
         return "claude-opus-4-6"
     if provider == "ollama":
-        return "qwen3:14b"
+        return "qwen3.5:4b"
     if provider == "openai":
         # OpenAI-compat needs a model name explicitly; fall back to a common LM Studio default.
         return os.environ.get("MEM0_LLM_MODEL") or "qwen3-14b"

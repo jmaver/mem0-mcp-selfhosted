@@ -27,7 +27,7 @@ search / update / robustness cases salvaged from the v0.3-era
     Claude Code credentials file).
   - `MEM0_OPENAI_API_KEY` and/or `MEM0_LLM_URL` for OpenAI-compatible
     endpoints (LM Studio, vLLM, llama.cpp).
-  - Ollama with an instruct-tuned model pulled (default `qwen3:14b`).
+  - Ollama with an instruct-tuned model pulled (default `qwen3.5:4b`).
 
 Providers without prereqs are skipped, not failed.
 

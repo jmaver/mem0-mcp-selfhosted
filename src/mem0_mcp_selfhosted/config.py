@@ -86,7 +86,7 @@ def build_config() -> tuple[dict[str, Any], list[ProviderInfo]]:
     if llm_provider not in _supported_llm_providers:
         raise ValueError(f"Unsupported MEM0_LLM_PROVIDER={llm_provider!r}. Supported: {list(_supported_llm_providers)}")
 
-    _llm_model_defaults = {"anthropic": "claude-opus-4-6", "ollama": "qwen3:14b", "openai": ""}
+    _llm_model_defaults = {"anthropic": "claude-opus-4-6", "ollama": "qwen3.5:4b", "openai": ""}
     llm_model = env("MEM0_LLM_MODEL", _llm_model_defaults[llm_provider])
     if llm_provider == "openai" and not llm_model:
         raise ValueError("MEM0_LLM_MODEL is required for the 'openai' provider (e.g. 'qwen3-14b')")

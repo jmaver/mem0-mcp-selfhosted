@@ -13,6 +13,7 @@ import logging
 import os
 import sys
 import tempfile
+import time
 from collections import deque
 from pathlib import Path
 
@@ -91,6 +92,13 @@ def _log_hook_event(hook: str, msg: str) -> None:
             f.write(f"{ts} [{hook}] {msg}\n")
     except OSError:
         pass
+
+
+def _emit_profile(hook: str, phase: str, t0: float, **extras: object) -> None:
+    """Emit a `profile.<phase>=<elapsed>s [k=v ...]` line for benchmark scrapers."""
+    elapsed = time.perf_counter() - t0
+    suffix = "".join(f" {k}={v}" for k, v in extras.items())
+    _log_hook_event(hook, f"profile.{phase}={elapsed:.3f}s{suffix}")
 
 
 def _output(data: dict) -> None:
@@ -322,12 +330,15 @@ def _read_recent_messages(transcript_path: str) -> list[tuple[str, str]]:
 
 def session_end_main() -> None:
     """SessionEnd hook: save session summary to mem0."""
+    t_start = time.perf_counter()
     _log_hook_event("session_end", "hook entry point reached")
     try:
+        t0 = time.perf_counter()
         raw_stdin = sys.stdin.read()
-        _log_hook_event("session_end", f"stdin length={len(raw_stdin)}")
         hook_input = json.loads(raw_stdin)
+        _log_hook_event("session_end", f"stdin length={len(raw_stdin)}")
         _log_hook_event("session_end", f"parsed input keys={list(hook_input.keys())}")
+        _emit_profile("session_end", "stdin_parse", t0)
 
         session_id = hook_input.get("session_id", "")
         transcript_path = hook_input.get("transcript_path", "")
@@ -341,11 +352,14 @@ def session_end_main() -> None:
         # Missing / invalid transcript
         if not transcript_path or not Path(transcript_path).is_file():
             _log_hook_event("session_end", "no valid transcript — skipping")
+            _emit_profile("session_end", "total", t_start, arm="no_transcript")
             _output(_nonfatal())
             return
 
+        t0 = time.perf_counter()
         recent = _read_recent_messages(transcript_path)
         _log_hook_event("session_end", f"read {len(recent)} recent messages")
+        _emit_profile("session_end", "transcript_read", t0, n=len(recent))
 
         # Skip short sessions — AND means we save when *either* side
         # contributed meaningful content (e.g. short question + long answer).
@@ -353,6 +367,7 @@ def session_end_main() -> None:
         asst_total = sum(len(c) for r, c in recent if r == "assistant")
         if user_total < _MIN_USER_LEN and asst_total < _MIN_ASSISTANT_LEN:
             _log_hook_event("session_end", f"session too short (user={user_total}, asst={asst_total}) — skipping")
+            _emit_profile("session_end", "total", t_start, arm="too_short")
             _output(_nonfatal())
             return
 
@@ -385,8 +400,10 @@ def session_end_main() -> None:
         _log_hook_event("session_end", f"summary length={len(summary)} chars")
 
         _log_hook_event("session_end", "initializing memory client...")
+        t0 = time.perf_counter()
         mem = _get_memory()
         _log_hook_event("session_end", "memory client ready")
+        _emit_profile("session_end", "memory_init", t0)
 
         from mem0_mcp_selfhosted.helpers import get_default_user_id, make_project_user_id
 
@@ -394,6 +411,7 @@ def session_end_main() -> None:
         project_uid = make_project_user_id(user_id, project_name)
         _log_hook_event("session_end", f"calling mem.add (user_id={project_uid})...")
 
+        t0 = time.perf_counter()
         add_result = mem.add(
             messages=[{"role": "user", "content": summary}],
             user_id=project_uid,
@@ -403,6 +421,7 @@ def session_end_main() -> None:
                 "session_id": session_id,
             },
         )
+        _emit_profile("session_end", "mem_add", t0)
 
         # Collect IDs of newly-added memories for the post-add dedup pass.
         events = add_result.get("results", []) if isinstance(add_result, dict) else (add_result or [])
@@ -415,16 +434,20 @@ def session_end_main() -> None:
                 added_ids.append(mid)
         _log_hook_event("session_end", f"mem.add returned {len(added_ids)} new memories")
 
+        t0 = time.perf_counter()
         dropped = _dedup_against_existing(mem, added_ids, project_uid)
+        _emit_profile("session_end", "dedup_post", t0)
         if dropped:
             _log_hook_event("session_end", f"dedup dropped {dropped}/{len(added_ids)} as semantic duplicates")
 
         _log_hook_event("session_end", f"saved session for project '{project_name}' (user_id={project_uid})")
+        _emit_profile("session_end", "total", t_start)
         _output(_nonfatal())
 
     except Exception as exc:
         logger.debug("session_end_main failed", exc_info=True)
         _log_hook_event("session_end", f"FAILED: {exc}")
+        _emit_profile("session_end", "total", t_start, arm="exception")
         _output(_nonfatal())
 
 

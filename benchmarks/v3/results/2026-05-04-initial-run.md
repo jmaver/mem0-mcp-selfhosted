@@ -81,17 +81,36 @@ either the corpus is too easy or the BM25/entity-boost monkey-patches aren't
 toggling. Need a 100+ fact corpus with adjacent topics before the differential
 becomes measurable.
 
-## Provider battle (LM Studio leg only)
+## Provider battle (3-way)
 
-`python -m benchmarks.v3.provider_battle --providers openai --limit 5`
+| provider | model | mean F1 | ci95 | mean recall | hallucinations | add P50 / P95 / mean | fail/n | notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| openai (LM Studio) | qwen3.5-4b-mlx | 0.760 | (0.38, 1.00) | 0.733 | 0 | 6.66 / 11.89 / 7.79 s | 0/5 | FE05 returned no facts |
+| ollama (native) | qwen3.5:4b | **1.000** | (1.00, 1.00) | 1.000 | 0 | 15.65 / 20.07 / 14.22 s | 0/5 | perfect F1, ~3× slower |
+| anthropic (OAT) | claude-opus-4-6 | n/a | n/a | n/a | n/a | n/a | 5/5 (429) | rate-limited |
 
-| provider | model | mean F1 | ci95 | mean recall | hallucinations | add P50 / P95 / mean | fail/n |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| openai (LM Studio) | qwen3.5-4b-mlx | **0.760** | (0.38, 1.00) | 0.733 | **0** | 6.66 s / 11.89 s / 7.79 s | 0/5 |
+**Same nominal 4 B Qwen, different stacks** — Ollama (Q4_K_M GGUF) beat LM
+Studio (MLX 4-bit) 1.0 vs 0.76 on extraction F1, at 3× the per-add latency.
+The `OllamaToolLLM` provider's `<think>`-tag stripping + JSON retry may be
+recovering edge cases the `OpenAICompatLLM` path misses, or the MLX
+quantization is lossier than Ollama's default — both worth measuring with a
+larger N.
 
-5/5 cases completed, zero hallucinations. Case `FE05` extracted nothing
-(F1=0); the rest scored 0.80–1.00. Anthropic and Ollama legs need their
-respective creds / pulled models to run.
+**Anthropic OAT via Claude Code subscription is rate-limited** for
+extraction-heavy benchmarks. mem0's `infer=True` issues ~6–10 LLM calls per
+`add()` (fact retrieval + diff + structured-output), which trips the 429
+window quickly. A fair Anthropic comparison would require `ANTHROPIC_API_KEY`
+on a paid tier, not the OAT path.
+
+### Provider battle gotchas (worth surfacing in the runner)
+
+When running `--providers ollama` from a shell that already has
+`MEM0_LLM_URL=http://<lm-studio>/v1`, the Ollama provider tries to call
+`http://<lm-studio>/v1/api/chat` and crashes with a `pydantic ChatResponse`
+validation error. The runner needs to override `MEM0_LLM_URL` per leg, or the
+operator must pass `MEM0_LLM_URL=http://<ollama-host>:11434` explicitly when
+the Ollama leg runs. Currently has to be done manually — file as a
+follow-up.
 
 ## Cleanup
 
@@ -106,6 +125,12 @@ production `mem0_mcp_selfhosted` — nothing leaked into the real memory store.
    Claude Code 30 s budget needs a bump or initialization needs deferring.
 2. Expand the retrieval corpus to 100+ facts with semantic confusables so the
    hybrid-vs-semantic comparison produces real signal.
-3. `ollama pull qwen3:14b` and re-run `provider_battle.py --providers
-   openai,ollama` for the local-vs-local comparison; add Anthropic when an
-   OAT token is resolvable in the shell env.
+3. Fix `provider_battle.py` per-leg `MEM0_LLM_URL` override — currently
+   the Ollama leg crashes if the shell still has an OpenAI-compat URL set.
+4. Run the Anthropic leg with a real `ANTHROPIC_API_KEY` on a paid tier
+   (OAT-via-subscription tokens hit 429 immediately on extraction-heavy
+   benchmarks).
+5. The Ollama-vs-LM-Studio extraction quality gap (1.0 vs 0.76 on the same
+   nominal 4 B Qwen) is worth investigating with a larger case set —
+   either MLX quantization is lossier or the provider-class quirk-handling
+   is doing more work than expected.

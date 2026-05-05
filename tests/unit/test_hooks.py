@@ -306,8 +306,8 @@ class TestReadRecentMessages:
         p = tmp_path / "transcript.jsonl"
         total = hooks._RECENT_WINDOW + 10  # always more than the window
         lines = []
-        # Pad each message past _MIN_EXCHANGE_LEN so the noise filter doesn't drop them.
-        pad = "x" * hooks._MIN_EXCHANGE_LEN
+        # Pad each message so the bytes-truncation filter has something to keep.
+        pad = "x" * 40
         for i in range(total):
             role = "user" if i % 2 == 0 else "assistant"
             lines.append(json.dumps({"role": role, "content": f"msg {i:03d} {pad}"}))
@@ -341,10 +341,29 @@ class TestReadRecentMessages:
 
 
 class TestIsNoise:
-    def test_short_message_is_noise(self):
-        """Anything below _MIN_EXCHANGE_LEN is dropped regardless of role."""
+    def test_user_pings_are_noise(self):
+        """Pure ping-style user messages are the only short user content dropped."""
         assert hooks._is_noise("user", "ok thanks") is True
-        assert hooks._is_noise("assistant", "done.") is True
+        assert hooks._is_noise("user", "thanks") is True
+        assert hooks._is_noise("user", "OK!") is True
+        assert hooks._is_noise("user", "yes") is True
+
+    def test_short_user_directive_kept(self):
+        """Short user directives carry durable signal and must not be filtered."""
+        # Regression: prior 40-char cutoff dropped these. Codex flagged it as
+        # high-severity recall loss for SessionEnd extraction.
+        assert hooks._is_noise("user", "use postgres 17") is False
+        assert hooks._is_noise("user", "switch to dark mode") is False
+        assert hooks._is_noise("user", "we deploy on AWS") is False
+
+    def test_empty_content_is_noise(self):
+        assert hooks._is_noise("user", "") is True
+        assert hooks._is_noise("assistant", "   ") is True
+
+    def test_short_assistant_message_is_noise(self):
+        """Sub-4-char assistant messages are pings ('ok', 'yes')."""
+        assert hooks._is_noise("assistant", "ok") is True
+        assert hooks._is_noise("assistant", "yes") is True
 
     def test_assistant_tool_narration_is_noise(self):
         """Short assistant messages starting with narration prefixes are dropped."""
@@ -358,19 +377,47 @@ class TestIsNoise:
         assert hooks._is_noise("assistant", long_msg) is False
 
     def test_user_narration_prefix_not_filtered(self):
-        """User messages aren't subject to narration-prefix filtering — only length."""
+        """User messages aren't subject to narration-prefix filtering — only ping detection."""
         msg = "let me know when the deploy finishes please thank you very much"
         assert hooks._is_noise("user", msg) is False
 
-    def test_pure_code_block_is_noise(self):
-        """A short pure code-fence dump with no surrounding prose is dropped."""
+    def test_assistant_code_block_kept(self):
+        """A code-fence answer (config snippet, final command) is durable signal."""
+        # Regression: prior heuristic dropped any short pure-code block.
+        # Codex flagged this as recall loss — code-only answers often contain
+        # the durable artifact the hook is supposed to save.
         code = "```python\nprint('hi')\nx = 1\n```"
-        assert hooks._is_noise("assistant", code) is True
+        assert hooks._is_noise("assistant", code) is False
 
     def test_durable_user_message_kept(self):
         """Realistic user content with project info is preserved."""
         msg = "we use postgres with prisma in this project, tests run via pytest -v"
         assert hooks._is_noise("user", msg) is False
+
+
+# ---------------------------------------------------------------------------
+# _dedup_against_existing — post-add semantic dedup using v3 search contract
+# ---------------------------------------------------------------------------
+
+
+class TestDedupAgainstExisting:
+    def test_search_uses_top_k_not_limit(self):
+        """v3 contract: search uses top_k. limit was the v0.3 spelling."""
+        # Regression for codex finding: passing limit=3 silently disables the
+        # bound on v3, letting the search return many more hits than intended
+        # and pushing the SessionEnd hook closer to its budget.
+        mock_mem = MagicMock()
+        mock_mem.get.return_value = {"memory": "test fact", "created_at": "2026-01-01"}
+        mock_mem.search.return_value = {"results": []}
+
+        hooks._dedup_against_existing(mock_mem, ["mid1"], "user:proj")
+
+        assert mock_mem.search.called
+        kwargs = mock_mem.search.call_args.kwargs
+        assert "top_k" in kwargs, f"v3 contract requires top_k; got {list(kwargs)}"
+        assert "limit" not in kwargs
+        assert kwargs["top_k"] == 3
+        assert kwargs["filters"] == {"user_id": "user:proj"}
 
 
 # ---------------------------------------------------------------------------

@@ -41,9 +41,17 @@ _MIN_ASSISTANT_LEN = 50
 _MAX_CONTENT_LEN = 4000
 _RECENT_WINDOW = 20  # last ~10 exchanges (user+assistant pairs)
 _DEDUP_SIM_THRESHOLD = 0.88  # post-add: if a new memory matches an older one above this, drop the new one
-_MIN_EXCHANGE_LEN = 40  # exchanges shorter than this are filtered as noise (tool narration, pings)
 
-# Phrases that flag a message as transient narration — not worth extracting from.
+# Pings that look like content but carry no extractable signal. Match is
+# applied to user messages after lower-casing and stripping trailing punctuation.
+_USER_PING_PHRASES = frozenset({
+    "ok", "okay", "yes", "no", "y", "n", "thx", "thanks", "ty", "k",
+    "sure", "got it", "cool", "nice", "great", "ok thanks", "thank you",
+})
+
+# Phrases that flag an assistant message as transient narration — not worth
+# extracting from. Only applied when the message is also short (< 200 chars);
+# longer narration usually has durable content past the prefix.
 _NOISE_PREFIXES = (
     "let me ",
     "i'll ",
@@ -229,23 +237,23 @@ def _extract_content(content) -> str:
 def _is_noise(role: str, content: str) -> bool:
     """Heuristic filter: drop transient narration before extraction.
 
-    Targets the three dominant low-value patterns in Claude Code transcripts:
-    - very short pings ("ok", "yes", "thanks")
-    - assistant tool-call narration ("Let me check...", "Running tests...")
-    - pure code-fence dumps with no prose context
+    User messages are kept unless they're pure pings ("ok thanks") — short
+    user directives ("use postgres 17") are durable signal. Assistant
+    messages are dropped when they match a tool-call narration prefix and
+    stay under 200 chars; code-fence blocks are kept (a code-only answer
+    is often a config snippet or final command worth preserving).
     """
     stripped = content.strip()
-    if len(stripped) < _MIN_EXCHANGE_LEN:
+    if not stripped:
         return True
-    if role == "assistant":
-        lower = stripped.lower()
-        if any(lower.startswith(p) for p in _NOISE_PREFIXES) and len(stripped) < 200:
-            return True
-        # Pure code block (starts and ends with fence, no surrounding prose)
-        if stripped.startswith("```") and stripped.rstrip().endswith("```"):
-            inner = stripped.strip("`").strip()
-            if "\n" in inner and len(inner) < 600:
-                return True
+    if role == "user":
+        normalized = stripped.lower().rstrip(".!?")
+        return normalized in _USER_PING_PHRASES
+    if len(stripped) < 4:
+        return True
+    lower = stripped.lower()
+    if any(lower.startswith(p) for p in _NOISE_PREFIXES) and len(stripped) < 200:
+        return True
     return False
 
 
@@ -272,7 +280,7 @@ def _dedup_against_existing(mem, added_ids: list[str], project_uid: str) -> int:
         if not text:
             continue
         try:
-            results = mem.search(query=text, filters={"user_id": project_uid}, limit=3)
+            results = mem.search(query=text, filters={"user_id": project_uid}, top_k=3)
         except Exception:
             continue
         hits = results.get("results", []) if isinstance(results, dict) else results

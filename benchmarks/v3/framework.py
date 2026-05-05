@@ -93,11 +93,6 @@ def _fuzzy_match(needle: str, haystack: str) -> bool:
     return _norm(needle) in _norm(haystack)
 
 
-def _fuzzy_match_any(needle: str, texts: list[str]) -> bool:
-    nn = _norm(needle)
-    return any(nn in _norm(t) for t in texts)
-
-
 def score_fact_extraction(memories: list[dict], case: FactExtractionCase) -> dict:
     """F1 of expected facts + hallucination penalty."""
     all_text = " ".join(m.get("memory", "") for m in memories).lower()
@@ -210,8 +205,13 @@ def check_qdrant() -> str | None:
         return None
 
 
-def check_ollama() -> str | None:
-    url = os.environ.get("MEM0_EMBED_URL") or os.environ.get("MEM0_OLLAMA_URL") or "http://localhost:11434"
+def check_ollama(url: str | None = None) -> str | None:
+    """Return the URL if ``<url>/api/tags`` responds, else None.
+
+    With ``url=None``, falls back to ``MEM0_EMBED_URL`` / ``MEM0_OLLAMA_URL``
+    / localhost:11434 — same behavior the bench framework relies on.
+    """
+    url = url or os.environ.get("MEM0_EMBED_URL") or os.environ.get("MEM0_OLLAMA_URL") or "http://localhost:11434"
     try:
         urllib.request.urlopen(f"{url}/api/tags", timeout=5)
         return url

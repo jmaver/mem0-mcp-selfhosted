@@ -31,6 +31,13 @@ search / update / robustness cases salvaged from the v0.3-era
 
 Providers without prereqs are skipped, not failed.
 
+### Bench-time tuning
+
+Set `MEM0_QDRANT_TIMEOUT=60` before any bench run. Without it, every run under
+load hits a timeout on `create_collection` and the runner aborts. The default
+Qdrant client timeout (5 s) is too short when Qdrant is busy creating sparse +
+dense vector slots; 60 s is the tested safe value.
+
 ## Running
 
 ```bash

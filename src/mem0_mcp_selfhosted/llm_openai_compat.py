@@ -71,10 +71,10 @@ def _sanitize_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
     return sanitized
 
 
-# gpt-5.x cloud models (gpt-5.4-nano, gpt-5.4-mini, etc.) reject the
-# legacy ``max_tokens`` parameter and require ``max_completion_tokens``.
-# mem0's upstream base class only filters params for o1/o3 reasoning
-# models, not for gpt-5.x — so we patch the gap here.
+# gpt-5.x cloud models reject ``max_tokens`` (require ``max_completion_tokens``).
+# mem0's base class only filters this for o1/o3 reasoning models, not gpt-5.x.
+# "gpt-5" overlaps mem0's reasoning-model set; mem0 short-circuits us there,
+# leaving this override active only for non-reasoning gpt-5.x variants.
 _GPT5_REJECTS_MAX_TOKENS_PREFIXES = ("gpt-5", "chatgpt-5")
 
 

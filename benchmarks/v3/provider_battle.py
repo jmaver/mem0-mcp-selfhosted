@@ -263,6 +263,42 @@ def _run_provider(provider: str, cases: list, collection: str, sleep_between_cas
     )
 
 
+# OpenAI-compat URLs that always require an API key (cloud, not local).
+_OPENAI_CLOUD_HOSTS = ("api.openai.com",)
+
+
+def _openai_url_needs_key(url: str) -> bool:
+    return any(host in url.lower() for host in _OPENAI_CLOUD_HOSTS)
+
+
+def _leg_available(leg: dict[str, Any]) -> tuple[bool, str]:
+    provider = leg.get("provider", "")
+    if provider == "anthropic":
+        if leg.get("anthropic_token"):
+            return True, ""
+        # Mirror the legacy --providers path: fall through to resolve_token()
+        # so legs without an explicit token can still authenticate via
+        # MEM0_ANTHROPIC_TOKEN, ~/.claude/.credentials.json, or ANTHROPIC_API_KEY.
+        try:
+            from mem0_mcp_selfhosted.auth import resolve_token
+        except Exception as exc:
+            return False, f"auth import failed: {exc}"
+        return (True, "") if resolve_token() else (False, "no Anthropic token")
+    if provider == "openai":
+        if leg.get("llm_api_key"):
+            return True, ""
+        url = leg.get("llm_url")
+        if not url:
+            return False, "neither llm_api_key nor llm_url set"
+        if _openai_url_needs_key(url):
+            return False, f"{url} requires llm_api_key"
+        return True, ""
+    if provider == "ollama":
+        url = leg.get("llm_url")
+        return (True, "") if check_ollama(url) else (False, f"ollama unreachable{f' at {url}' if url else ''}")
+    return False, f"unknown provider {provider!r}"
+
+
 def _run_leg(leg: dict[str, Any], cases: list, collection: str, sleep_between_cases: float) -> dict[str, Any] | None:
     """Named-leg path: run a leg dict produced by ``_resolve_leg``.
 
@@ -272,6 +308,10 @@ def _run_leg(leg: dict[str, Any], cases: list, collection: str, sleep_between_ca
     ``MEM0_LLM_URL`` (e.g. LM Studio's URL from ``mem0-env.sh``) leaks into
     the Anthropic ``anthropic_base_url`` and silently breaks the run.
     """
+    available, reason = _leg_available(leg)
+    if not available:
+        print(f"  [skip] {leg['name']}: {reason}")
+        return None
     overrides: dict[str, str | None] = {
         "model": leg.get("model"),
         "llm_url": leg.get("llm_url"),

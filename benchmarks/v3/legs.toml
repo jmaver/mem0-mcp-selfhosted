@@ -41,6 +41,9 @@ model = "qwen3:14b"
 llm_url = "http://localhost:11434"
 description = "Local Ollama Qwen3-14B GGUF (v3 default)"
 
+# anthropic-oat is for testing the OAT auth refresh flow only — not for routine benchmarks.
+# Claude Pro/Max subscription tiers lack sufficient budget for mem0's 6-10 LLM calls per add().
+# Use anthropic-api instead for any fact-extraction runs at scale.
 [legs.anthropic-oat]
 provider = "anthropic"
 model = "claude-opus-4-6"
@@ -59,3 +62,10 @@ model_env = "MEM0_QWEN_ANTHROPIC_MODEL"
 llm_url_env = "MEM0_QWEN_ANTHROPIC_BASE_URL"
 anthropic_token_env = "MEM0_QWEN_ANTHROPIC_AUTH_TOKEN"
 description = "Qwen3.6 via Anthropic-compatible third-party endpoint"
+
+[legs.anthropic-glm]
+provider = "anthropic"
+model_env = "MEM0_GLM_ANTHROPIC_MODEL"
+llm_url_env = "MEM0_GLM_ANTHROPIC_BASE_URL"
+anthropic_token_env = "MEM0_GLM_ANTHROPIC_AUTH_TOKEN"
+description = "GLM via Anthropic-compatible third-party endpoint"

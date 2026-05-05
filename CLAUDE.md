@@ -40,3 +40,4 @@ Self-hosted MCP server using `mem0ai` (>=2.0.1, "v3") as a library. 9 memory too
 - Qdrant must be v1.12+ (sparse vectors for BM25 alongside dense vectors in the same collection)
 - spaCy `en_core_web_sm` is required for v3's entity-linking pipeline; install via `uv run python -m spacy download en_core_web_sm`
 - Contract tests (`tests/contract/`) validate mem0ai internal API assumptions — if these fail after a mem0ai upgrade, the code needs updating
+- Avoid MLX 4-bit quants for production fact extraction: the 6-way bench showed ~24 pp F1 regression vs GGUF Q4_K_M on the same model (see `benchmarks/v3/results/2026-05-04-six-way-provider-battle.md`)

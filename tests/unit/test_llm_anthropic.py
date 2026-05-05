@@ -671,3 +671,30 @@ class TestGenerateResponseEmptyContent:
         )
 
         assert result == "hello world"
+
+    def test_thinking_block_first_then_text_block(self):
+        """Models that emit a thinking block before the text block (extended
+        thinking on Anthropic; always-on for some third-party Anthropic-shaped
+        endpoints like qwen3.6 via DashScope) must have their *text* block
+        returned, not the thinking block.
+
+        Regression: ``_extract_text_block`` previously read ``content[0].text``
+        unconditionally; on a ``ThinkingBlock`` (which has ``.thinking`` but no
+        ``.text``) that yielded ``None`` and silently dropped the response.
+        """
+        llm = _make_llm(API_KEY)
+        thinking = MagicMock(spec=["type", "thinking"])
+        thinking.type = "thinking"
+        thinking.thinking = "let me think..."
+        text_block = MagicMock(spec=["type", "text"])
+        text_block.type = "text"
+        text_block.text = "the actual answer"
+        response = MagicMock()
+        response.content = [thinking, text_block]
+        llm.client.messages.create = MagicMock(return_value=response)
+
+        result = llm.generate_response(
+            messages=[{"role": "user", "content": "test"}],
+        )
+
+        assert result == "the actual answer"

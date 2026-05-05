@@ -105,17 +105,20 @@ _STRUCTURED_OUTPUT_PREFIXES = ("claude-opus-4", "claude-sonnet-4", "claude-haiku
 
 
 def _extract_text_block(response: anthropic.types.Message) -> str | None:
-    """Return the first content block's text, or None if missing/non-text.
+    """Return the first text-block's ``.text``, or None.
 
-    Anthropic's ``Message.content`` is a list of union-typed blocks; only some
-    variants (``TextBlock``, ``ThinkingBlock``) carry a ``.text`` field. Duck-
-    type the lookup so the function tolerates both real SDK objects and test
-    mocks (which set ``.text`` directly on a ``MagicMock``).
+    Scans rather than taking ``content[0]``: some endpoints (e.g. DashScope
+    Qwen3.6, GLM, or any Anthropic config with extended thinking) emit a
+    ``ThinkingBlock`` first whose ``.thinking`` is non-None but ``.text`` is
+    missing. Duck-typed for test-mock compatibility.
     """
     if not response.content:
         return None
-    text = getattr(response.content[0], "text", None)
-    return text if isinstance(text, str) else None
+    for block in response.content:
+        text = getattr(block, "text", None)
+        if isinstance(text, str):
+            return text
+    return None
 
 
 def _parse_retry_after(exc: anthropic.APIStatusError) -> int | None:
@@ -402,6 +405,8 @@ class AnthropicOATLLM(LLMBase):
             except anthropic.APIStatusError as exc:
                 is_last_attempt = attempt == max_attempts - 1
                 if exc.status_code == 429:
+                    # 429 retries share ``attempt``, so a prior 429 tightens the 5xx budget —
+                    # intentional; keeps total retry cost capped at ``_MAX_RETRIES``.
                     if rate_limit_attempts >= self._RATE_LIMIT_MAX_RETRIES or is_last_attempt:
                         raise
                     rate_limit_attempts += 1

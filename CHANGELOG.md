@@ -1,6 +1,44 @@
 # CHANGELOG
 
 
+## v0.4.0 (2026-05-05)
+
+### Features
+
+- Migrate to mem0ai v3 (`>=2.0.1`): graph-free hybrid retrieval (semantic + BM25 sparse vectors + entity matching) replaces the old vector+Neo4j dual-pipeline
+- Remove graph memory (Neo4j, `MEM0_ENABLE_GRAPH`, `search_graph`, `get_entity` tools); mem0 v3 provides built-in entity linking via spaCy
+- Project-scoped memory isolation via `user_id:project` encoding — `make_project_user_id()` / `search_with_project()` helpers; `search_memories` returns project + global results merged and deduplicated
+- Custom Anthropic LLM provider (`llm_anthropic.py`): OAT token auth, structured outputs via JSON schema, extended-thinking response handling
+- Custom Ollama LLM provider (`llm_ollama.py`): restored tool-calling removed in upstream mem0ai, defense-in-depth against `<think>` + `format:"json"` collision
+- Custom OpenAI-compat LLM provider (`llm_openai_compat.py`): strips unsupported `json_object` response_format for LM Studio / vLLM / llama.cpp (`MEM0_LLM_PROVIDER=openai`)
+- SessionEnd hook (`mem0-hook-session-end`) tightened: semantic dedup of extracted facts, sliding-window bounded deque over last ~10 exchanges
+- v3 benchmark suite under `benchmarks/v3/`: `provider_battle.py` (named-leg system, hermetic env, throttle), `retrieval_quality.py`, `hook_and_scoping.py`, `dedup_and_entity.py`; wrapper at `benchmarks/bench_all.sh`
+- Default Ollama model changed from `qwen3:14b` to `qwen3.5:4b` — bench-validated higher F1 at smaller VRAM footprint
+
+### Breaking Changes
+
+- **Graph memory removed** — Neo4j is no longer used. Users running Neo4j for this server can retire it. No data migration path for graph nodes/relationships.
+- **Qdrant must be v1.12+** — sparse vector slots (BM25) are written alongside dense vectors on first upsert. Existing v0.3 collections lack the sparse-vector schema and will fail on upsert; point `MEM0_COLLECTION` at a new name or drop and recreate the old collection.
+- **mem0ai `>=2.0.1` required** — `Memory.search()` contract changed: entity IDs (`user_id`, `agent_id`, `run_id`) now go inside `filters={}`, not as top-level kwargs.
+- **`add_memory` / `search_memories` tool signatures** — `enable_graph` parameter removed; `search_memories` now does hybrid search unconditionally.
+- **env vars now no-ops** — `MEM0_ENABLE_GRAPH`, `MEM0_NEO4J_*`, and `MEM0_GRAPH_*` are detected at startup and a single warning is logged; they have no runtime effect.
+- **One-time action**: run `uv sync` (spaCy `en_core_web_sm` wheel is now a real project dependency — no separate download step needed).
+
+### Bug Fixes
+
+- Fix 5 LLM provider bugs discovered during 6-way provider battle: Anthropic thinking-block first, Qwen3.6/GLM tool-call parse failures, leg gating, OpenAI-compat double-yield, mutate-while-iterate in bulk delete
+- Fix P1 schema regression (Pydantic), P2 pagination off-by-one in `list_entities`, P3 version field missing from config (Codex review)
+- Fix project-scope isolation: `search_with_project()` always passes entity IDs inside `filters={}` per v3 contract
+- Fix `top_k` not forwarded to `Memory.search()` in all code paths
+- Fix hook fixture isolation (unit tests no longer share state between runs)
+
+### Chores
+
+- Bump version to `0.4.0`
+- Bump `mem0ai` dependency to `>=2.0.1` (v3)
+- Add `en-core-web-sm` as a direct wheel dependency (no post-install download step)
+
+
 ## v0.3.2 (2026-03-13)
 
 ### Bug Fixes

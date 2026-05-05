@@ -245,12 +245,13 @@ All configuration is via environment variables. Create a `.env` file or set them
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MEM0_PROVIDER` | `anthropic` | Top-level provider (`anthropic` or `ollama`). Cascades to `MEM0_LLM_PROVIDER` when not set. Does **not** affect `MEM0_EMBED_PROVIDER`. |
-| `MEM0_LLM_PROVIDER` | _(MEM0_PROVIDER)_ | Main LLM provider: `anthropic` or `ollama`. Inherits from `MEM0_PROVIDER` when not set. |
+| `MEM0_PROVIDER` | `anthropic` | Top-level provider (`anthropic`, `ollama`, or `openai`). Cascades to `MEM0_LLM_PROVIDER` when not set. Does **not** affect `MEM0_EMBED_PROVIDER`. |
+| `MEM0_LLM_PROVIDER` | _(MEM0_PROVIDER)_ | Main LLM provider: `anthropic`, `ollama`, or `openai` (OpenAI-compatible — LM Studio, vLLM, llama.cpp). Inherits from `MEM0_PROVIDER` when not set. |
 | `MEM0_OLLAMA_URL` | `http://localhost:11434` | Shared Ollama base URL. Cascades to `MEM0_LLM_URL` and `MEM0_EMBED_URL` when those are not set. |
-| `MEM0_LLM_MODEL` | _(per-provider)_ | Model for the selected LLM provider. Defaults to `claude-opus-4-6` for Anthropic, `qwen3.5:4b` for Ollama |
-| `MEM0_LLM_URL` | _(cascades)_ | Ollama base URL for the main LLM. Cascades: `MEM0_LLM_URL` → `MEM0_OLLAMA_URL` → `http://localhost:11434`. Only used when `MEM0_LLM_PROVIDER=ollama` |
-| `MEM0_LLM_MAX_TOKENS` | `16384` | Max tokens for LLM responses (Anthropic only) |
+| `MEM0_LLM_MODEL` | _(per-provider)_ | Model for the selected LLM provider. Defaults to `claude-opus-4-6` for Anthropic, `qwen3.5:4b` for Ollama. Required for `openai` provider (e.g. `qwen3-14b`). |
+| `MEM0_LLM_URL` | _(cascades)_ | Base URL for the LLM. For Ollama: cascades `MEM0_LLM_URL` → `MEM0_OLLAMA_URL` → `http://localhost:11434`. For `openai` provider: the base URL of the OpenAI-compat server (e.g. `http://localhost:1234/v1`). For `anthropic`: optional override for Anthropic-shaped third-party endpoints. |
+| `MEM0_LLM_MAX_TOKENS` | `16384` | Max tokens for LLM responses (Anthropic and OpenAI-compat providers) |
+| `MEM0_OPENAI_API_KEY` | -- | API key for the `openai` provider or OpenAI embedder. Defaults to `"not-needed"` for local servers (LM Studio, vLLM) that don't require auth. |
 | `MEM0_OLLAMA_KEEP_ALIVE` | `30m` | How long Ollama keeps the model in VRAM between calls (e.g., `1h`, `5m`). Prevents model unload between sequential extraction calls |
 | `MEM0_OLLAMA_THINK` | `false` | Set to `true` to re-enable qwen3 thinking mode (disabled by default to prevent `<think>` + `format:"json"` collision) |
 
@@ -295,6 +296,7 @@ Claude Code
   │     ├── auth.py              ← Hybrid token fallback chain + OAT self-refresh
   │     ├── llm_anthropic.py     ← Custom Anthropic LLM provider (OAT + structured outputs)
   │     ├── llm_ollama.py        ← Custom Ollama LLM provider (restored tool-calling)
+  │     ├── llm_openai_compat.py ← OpenAI-compat provider for LM Studio / vLLM / llama.cpp
   │     ├── config.py            ← Env vars → MemoryConfig dict (provider + URL cascades)
   │     ├── helpers.py           ← Error wrapper, project-scoped search, safe bulk-delete
   │     ├── __init__.py          ← Telemetry suppression (before any mem0 import)
@@ -353,6 +355,10 @@ uv run pytest tests/ -v
 - **`tests/integration/`** -- Live infrastructure tests (memory lifecycle, bulk operations, hooks) against real Qdrant + Ollama. Marked with `@pytest.mark.integration`.
 
 Contract tests catch breaking changes in `mem0ai` upgrades before they reach production.
+
+### Benchmarks
+
+The `benchmarks/v3/` directory contains a suite of reproducible benchmarks covering provider F1 (fact extraction accuracy across 6+ LLM configs), retrieval quality (hybrid vs semantic-only), hook latency, and project-scoping correctness. See [`benchmarks/README.md`](benchmarks/README.md) for how to run them.
 
 ## Telemetry
 

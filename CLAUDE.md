@@ -16,8 +16,6 @@ uv run pytest tests/unit/test_auth.py::TestIsOatToken -v  # Single test class
 uv run pytest tests/unit/test_auth.py::TestIsOatToken::test_oat_token_detected -v  # Single test
 ```
 
-One-time post-install: `uv run python -m spacy download en_core_web_sm` (mem0 v3 entity linking).
-
 ## Architecture
 
 Self-hosted MCP server using `mem0ai` (>=2.0.1, "v3") as a library. 9 memory tools, FastMCP orchestrator. Hybrid retrieval (semantic + BM25 + entity matching) — no graph database.
@@ -38,6 +36,6 @@ Self-hosted MCP server using `mem0ai` (>=2.0.1, "v3") as a library. 9 memory too
 - `Memory.add()` v3 returns ADD events only (no UPDATE/DELETE/NONE) — single-pass extraction collapsed the old two-call diff pipeline
 - Structured output support requires claude-opus-4/sonnet-4/haiku-4 models; older models fall back to JSON extraction
 - Qdrant must be v1.12+ (sparse vectors for BM25 alongside dense vectors in the same collection)
-- spaCy `en_core_web_sm` is required for v3's entity-linking pipeline; install via `uv run python -m spacy download en_core_web_sm`
+- spaCy `en_core_web_sm` is required for v3's entity-linking pipeline; bundled as a wheel in `pyproject.toml` so `uv sync` installs it automatically
 - Contract tests (`tests/contract/`) validate mem0ai internal API assumptions — if these fail after a mem0ai upgrade, the code needs updating
 - Avoid MLX 4-bit quants for production fact extraction: the 6-way bench showed ~24 pp F1 regression vs GGUF Q4_K_M on the same model (see `benchmarks/v3/results/2026-05-04-six-way-provider-battle.md`)

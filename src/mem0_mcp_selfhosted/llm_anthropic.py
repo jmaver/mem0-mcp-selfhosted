@@ -372,12 +372,14 @@ class AnthropicOATLLM(LLMBase):
         """
         last_exc: Exception | None = None
         rate_limit_attempts = 0
-        for attempt in range(1 + self._MAX_RETRIES):
+        max_attempts = 1 + self._MAX_RETRIES
+        for attempt in range(max_attempts):
             try:
                 return self.client.messages.create(**params)
             except anthropic.APIStatusError as exc:
+                is_last_attempt = attempt == max_attempts - 1
                 if exc.status_code == 429:
-                    if rate_limit_attempts >= self._RATE_LIMIT_MAX_RETRIES:
+                    if rate_limit_attempts >= self._RATE_LIMIT_MAX_RETRIES or is_last_attempt:
                         raise
                     rate_limit_attempts += 1
                     delay = _parse_retry_after(exc) or self._RATE_LIMIT_DEFAULT_BACKOFF_SECONDS
@@ -393,13 +395,13 @@ class AnthropicOATLLM(LLMBase):
                 if exc.status_code not in self._RETRYABLE_STATUS_CODES:
                     raise
                 last_exc = exc
-                if attempt < self._MAX_RETRIES:
+                if not is_last_attempt:
                     delay = self._BACKOFF_SECONDS[attempt]
                     logger.warning(
                         "[mem0] Anthropic %d error (attempt %d/%d), retrying in %ds",
                         exc.status_code,
                         attempt + 1,
-                        1 + self._MAX_RETRIES,
+                        max_attempts,
                         delay,
                     )
                     time.sleep(delay)

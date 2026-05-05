@@ -277,16 +277,25 @@ if _SRC_DIR.is_dir():
         sys.path.insert(0, sys_path_str)
 
 
-_UNSET = object()
+# Sentinel that distinguishes "kwarg omitted" from "kwarg explicitly None/empty".
+# Three states per overridable env var:
+#   - kwarg omitted (UNSET)  → leave shell env alone
+#   - kwarg = "<value>"      → set env var to that value
+#   - kwarg = None or ""     → explicitly unset env var (hermetic legs)
+class _Unset:
+    pass
+
+
+UNSET: _Unset = _Unset()
 
 
 def make_memory(
     provider: str | None = None,
-    model: str | None | object = _UNSET,
+    model: str | None | _Unset = UNSET,
     collection: str = "mem0_bench_v3",
-    llm_url: str | None | object = _UNSET,
-    llm_api_key: str | None | object = _UNSET,
-    anthropic_token: str | None | object = _UNSET,
+    llm_url: str | None | _Unset = UNSET,
+    llm_api_key: str | None | _Unset = UNSET,
+    anthropic_token: str | None | _Unset = UNSET,
 ) -> tuple[Any, Callable[[], None]]:
     """Build a fresh ``mem0.Memory`` for benchmarking.
 
@@ -310,22 +319,19 @@ def make_memory(
     ``safe_bulk_delete`` on their own ``user_id`` so concurrent benchmarks
     don't wipe each other.
     """
-    # Three states per env var:
-    #   - kwarg omitted (sentinel _UNSET) → leave shell env alone
-    #   - kwarg = "<value>"               → set env var to that value
-    #   - kwarg = None or ""              → explicitly unset env var (hermetic legs)
-    overrides: dict[str, str | None] = {}
+    overrides: dict[str, str | None] = {"MEM0_COLLECTION": collection}
     if provider is not None:
         overrides["MEM0_LLM_PROVIDER"] = provider
-    if model is not _UNSET:
-        overrides["MEM0_LLM_MODEL"] = model if model else None  # type: ignore[assignment]
-    if llm_url is not _UNSET:
-        overrides["MEM0_LLM_URL"] = llm_url if llm_url else None  # type: ignore[assignment]
-    if llm_api_key is not _UNSET:
-        overrides["MEM0_OPENAI_API_KEY"] = llm_api_key if llm_api_key else None  # type: ignore[assignment]
-    if anthropic_token is not _UNSET:
-        overrides["MEM0_ANTHROPIC_TOKEN"] = anthropic_token if anthropic_token else None  # type: ignore[assignment]
-    overrides["MEM0_COLLECTION"] = collection
+    for env_name, value in (
+        ("MEM0_LLM_MODEL", model),
+        ("MEM0_LLM_URL", llm_url),
+        ("MEM0_OPENAI_API_KEY", llm_api_key),
+        ("MEM0_ANTHROPIC_TOKEN", anthropic_token),
+    ):
+        if isinstance(value, _Unset):
+            continue
+        # Empty strings collapse to None so hermetic legs unset rather than blank.
+        overrides[env_name] = value or None
 
     originals: dict[str, str | None] = {k: os.environ.get(k) for k in overrides}
     for k, v in overrides.items():

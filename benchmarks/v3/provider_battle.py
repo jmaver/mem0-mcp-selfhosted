@@ -24,6 +24,8 @@ import argparse
 import os
 import sys
 import time
+import tomllib
+from pathlib import Path
 from typing import Any
 
 from benchmarks.v3._corpora import FACT_EXTRACTION_CASES
@@ -37,6 +39,8 @@ from benchmarks.v3.framework import (
     score_fact_extraction,
 )
 from mem0_mcp_selfhosted.helpers import safe_bulk_delete
+
+_LEGS_FILE = Path(__file__).parent / "legs.toml"
 
 
 def _provider_available(provider: str) -> tuple[bool, str]:
@@ -79,16 +83,71 @@ def _extract_results(raw: Any) -> list[dict]:
     return []
 
 
-def _run_provider(provider: str, cases: list, collection: str) -> dict[str, Any] | None:
-    available, reason = _provider_available(provider)
-    if not available:
-        print(f"  [skip] {provider}: {reason}")
-        return None
+def _load_legs() -> dict[str, dict[str, Any]]:
+    """Read benchmarks/v3/legs.toml and return a name -> spec mapping."""
+    if not _LEGS_FILE.is_file():
+        return {}
+    with _LEGS_FILE.open("rb") as f:
+        data = tomllib.load(f)
+    return data.get("legs", {})
 
-    model = _default_model(provider)
-    print(f"\n=== {provider} ({model}) ===")
-    mem, cleanup_env = make_memory(provider=provider, model=model, collection=collection)
-    uid = bench_user_id(f"provider-{provider}")
+
+def _resolve_leg_value(spec: dict[str, Any], static_key: str, env_key: str) -> str | None:
+    """Resolve a leg value: prefer the static key, fall back to ``env_key`` env lookup.
+
+    e.g. _resolve_leg_value(spec, "model", "model_env") returns spec["model"]
+    if set, otherwise os.environ[spec["model_env"]] when that key exists.
+    Returns None if neither is configured.
+    """
+    if static_key in spec and spec[static_key]:
+        return str(spec[static_key])
+    env_var = spec.get(env_key)
+    if env_var:
+        val = os.environ.get(str(env_var))
+        if val:
+            return val
+        print(f"  [warn] leg references {env_var} but it is not set in the environment")
+    return None
+
+
+def _resolve_leg(name: str, spec: dict[str, Any]) -> dict[str, Any] | None:
+    """Resolve all env-references in a leg spec into concrete values."""
+    provider = spec.get("provider")
+    if not provider:
+        print(f"  [skip] {name}: no provider in spec")
+        return None
+    return {
+        "name": name,
+        "provider": str(provider),
+        "model": _resolve_leg_value(spec, "model", "model_env"),
+        "llm_url": _resolve_leg_value(spec, "llm_url", "llm_url_env"),
+        "llm_api_key": _resolve_leg_value(spec, "llm_api_key", "llm_api_key_env"),
+        "anthropic_token": _resolve_leg_value(spec, "anthropic_token", "anthropic_token_env"),
+        "description": spec.get("description", ""),
+    }
+
+
+def _run_with_overrides(
+    label: str,
+    provider: str,
+    cases: list,
+    collection: str,
+    sleep_between_cases: float,
+    **make_memory_overrides: Any,
+) -> dict[str, Any] | None:
+    """Shared inner loop. ``label`` is the human-readable run identifier;
+    ``provider`` is the mem0 provider class to register; ``make_memory_overrides``
+    accepts any kwargs ``framework.make_memory`` understands (model, llm_url,
+    llm_api_key, anthropic_token).
+    """
+    model = make_memory_overrides.get("model")
+    print(f"\n=== {label} ({provider} / {model or '<default>'}) ===")
+    mem, cleanup_env = make_memory(
+        provider=provider,
+        collection=collection,
+        **make_memory_overrides,
+    )
+    uid = bench_user_id(f"leg-{label}")
     timer = OperationTimer()
     f1_scores: list[float] = []
     recalls: list[float] = []
@@ -129,10 +188,18 @@ def _run_provider(provider: str, cases: list, collection: str) -> dict[str, Any]
             # Per-case cleanup so search results don't bleed across cases.
             safe_bulk_delete(mem, {"user_id": uid})
 
+            # Inter-case throttle for rate-limited providers (Anthropic OAT,
+            # OpenAI cloud, etc.). mem0's infer=True issues 6-10 LLM calls per
+            # add(); spacing cases out keeps short rate-limit windows from
+            # compounding across the run.
+            if sleep_between_cases > 0:
+                time.sleep(sleep_between_cases)
+
         mean_f1, lo_f1, hi_f1 = ci95(f1_scores)
         latency = timer.summary()
         return {
             "provider": provider,
+            "label": label,
             "model": model,
             "n_cases": len(cases),
             "n_failures": failures,
@@ -156,13 +223,14 @@ def _print_summary(rows: list[dict[str, Any]]) -> None:
     if not rows:
         print("No providers ran.")
         return
-    headers = ["provider", "model", "mean_f1", "ci95_f1", "mean_recall",
+    headers = ["leg", "provider", "model", "mean_f1", "ci95_f1", "mean_recall",
                "hallucinations", "add_p50", "add_p95", "add_mean", "fail/n"]
     widths = [len(h) for h in headers]
     table_rows = []
     for r in rows:
         row = [
-            r["provider"], str(r["model"]), f"{r['mean_f1']:.3f}",
+            r.get("label") or r["provider"], r["provider"], str(r["model"]),
+            f"{r['mean_f1']:.3f}",
             f"({r['ci95_f1'][0]:.2f},{r['ci95_f1'][1]:.2f})",
             f"{r['mean_recall']:.3f}", str(r["hallucinations"]),
             f"{r['add_p50']:.2f}s", f"{r['add_p95']:.2f}s",
@@ -178,12 +246,58 @@ def _print_summary(rows: list[dict[str, Any]]) -> None:
         print(" | ".join(f"{v:<{w}}" for v, w in zip(row, widths)))
 
 
+def _run_provider(provider: str, cases: list, collection: str, sleep_between_cases: float = 0.0) -> dict[str, Any] | None:
+    """Legacy ``--providers`` path: gate on availability, then defer to
+    ``_run_with_overrides`` with the provider's default model."""
+    available, reason = _provider_available(provider)
+    if not available:
+        print(f"  [skip] {provider}: {reason}")
+        return None
+    return _run_with_overrides(
+        label=provider,
+        provider=provider,
+        cases=cases,
+        collection=collection,
+        sleep_between_cases=sleep_between_cases,
+        model=_default_model(provider),
+    )
+
+
+def _run_leg(leg: dict[str, Any], cases: list, collection: str, sleep_between_cases: float) -> dict[str, Any] | None:
+    """Named-leg path: run a leg dict produced by ``_resolve_leg``.
+
+    Legs are intentionally hermetic — fields the leg doesn't set are passed
+    through as None to ``make_memory`` so the corresponding env var is *unset*
+    rather than inherited from the shell. Otherwise an unrelated
+    ``MEM0_LLM_URL`` (e.g. LM Studio's URL from ``mem0-env.sh``) leaks into
+    the Anthropic ``anthropic_base_url`` and silently breaks the run.
+    """
+    overrides: dict[str, str | None] = {
+        "model": leg.get("model"),
+        "llm_url": leg.get("llm_url"),
+        "llm_api_key": leg.get("llm_api_key"),
+        "anthropic_token": leg.get("anthropic_token"),
+    }
+    return _run_with_overrides(
+        label=leg["name"],
+        provider=leg["provider"],
+        cases=cases,
+        collection=collection,
+        sleep_between_cases=sleep_between_cases,
+        **overrides,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="provider extraction battle")
     parser.add_argument("--limit", type=int, default=0, help="truncate case list")
-    parser.add_argument("--providers", default="anthropic,ollama,openai",
-                        help="comma-separated subset to run")
+    parser.add_argument("--providers", default="",
+                        help="comma-separated provider list (legacy path: anthropic,ollama,openai)")
+    parser.add_argument("--leg", default="",
+                        help="comma-separated leg names from legs.toml, or 'all'")
     parser.add_argument("--collection", default="mem0_bench_v3")
+    parser.add_argument("--sleep", type=float, default=0.0,
+                        help="seconds to sleep between cases (rate-limit throttle)")
     args = parser.parse_args()
 
     if not check_qdrant():
@@ -194,14 +308,34 @@ def main() -> int:
         return 1
 
     cases = FACT_EXTRACTION_CASES[: args.limit] if args.limit else FACT_EXTRACTION_CASES
-    providers = [p.strip() for p in args.providers.split(",") if p.strip()]
-    print(f"Running {len(cases)} cases × {len(providers)} providers …")
+    rows: list[dict[str, Any]] = []
 
-    rows = []
-    for p in providers:
-        result = _run_provider(p, cases, args.collection)
-        if result:
-            rows.append(result)
+    if args.leg:
+        legs_table = _load_legs()
+        if not legs_table:
+            print(f"No legs.toml at {_LEGS_FILE} or it had no [legs.*] tables", file=sys.stderr)
+            return 1
+        names = list(legs_table.keys()) if args.leg.strip() == "all" else [n.strip() for n in args.leg.split(",") if n.strip()]
+        unknown = [n for n in names if n not in legs_table]
+        if unknown:
+            print(f"Unknown leg(s) {unknown}. Defined: {list(legs_table.keys())}", file=sys.stderr)
+            return 1
+        print(f"Running {len(cases)} cases × {len(names)} legs (sleep={args.sleep}s) …")
+        for name in names:
+            leg = _resolve_leg(name, legs_table[name])
+            if leg is None:
+                continue
+            result = _run_leg(leg, cases, args.collection, args.sleep)
+            if result:
+                rows.append(result)
+    else:
+        providers_str = args.providers or "anthropic,ollama,openai"
+        providers = [p.strip() for p in providers_str.split(",") if p.strip()]
+        print(f"Running {len(cases)} cases × {len(providers)} providers (sleep={args.sleep}s) …")
+        for p in providers:
+            result = _run_provider(p, cases, args.collection, sleep_between_cases=args.sleep)
+            if result:
+                rows.append(result)
 
     _print_summary(rows)
     return 0

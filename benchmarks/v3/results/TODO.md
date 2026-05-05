@@ -6,14 +6,41 @@ expanded corpora to see if the ceiling-saturation problem is gone.
 
 ## Still open
 
-### Sub-checkpoint `_get_memory()` for tighter init breakdown
-The session_end profile localized 4–5 s to `memory_init` but couldn't
-isolate which sub-phase (mem0 import / spaCy load / Qdrant init / first
-embed). Add the same `time.perf_counter()` pattern inside `_get_memory()`
-in `hooks.py` if init cost ever needs targeted optimization. Low priority
-while `mem_add` dominates at 13 s mean.
+### FE29: qwen3.5:4b multi-contradiction ceiling at F1=0.50
+The bench F1=0.00 was a transient Ollama JSON failure (handled by the Layer 6 retry).
+The underlying persistent limit is F1=0.50: qwen3.5:4b retains superseded database
+versions in its extraction ("MySQL 5.7, MySQL 8.0, and PostgreSQL 16" all appear in
+the stored memory) rather than suppressing the old values. This is a model-reasoning
+gap, not a parser bug. Options: (a) accept ≤0.50 for qwen3.5:4b on
+multi-contradiction cases and document it, or (b) add a post-extraction
+contradiction-resolution pass to the extraction prompt system message. See
+`2026-05-05-fe-failure-probes.md`.
 
 ## What landed in this session
+
+- ✅ FE05 / FE27 / FE29 failure probes — 5-iteration isolated probes run for
+  all three zero-F1 cases from the 2026-05-05 30-case bench. Findings:
+  - FE05 (lmstudio-qwen35-mlx): one-off transient; 5/5 F1=1.00 today.
+  - FE27 (lmstudio-qwen35-mlx): one-off transient; 5/5 F1=1.00 today. Markdown-fenced
+    JSON appears 2/5 in direct LLM calls but is already handled by `_clean_response()`
+    and mem0's `remove_code_blocks()`. No code fix needed.
+  - FE29 (ollama-qwen35-4b): bench F1=0.00 was a transient Ollama empty-JSON event
+    (one-off). Persistent baseline is F1=0.50 — model-capability limit on multi-
+    contradiction (retains superseded DB versions). No parser fix available.
+  See `2026-05-05-fe-failure-probes.md`. Probes at `benchmarks/v3/_probes/`.
+
+- ✅ Sub-checkpoint `_get_memory()` — four `profile.init.*` checkpoints added
+  to `hooks.py`. `Memory.from_config()` (Qdrant client init + collection-ensure
+  + spaCy pipeline load) is the dominant sub-phase at 83 % of `memory_init`
+  (mean 5.5 s of 6.7 s). Imports cost ~0.5 s; first warm-up search ~0.6 s;
+  `build_config()` + `register_providers()` ~0.01 s. See
+  `2026-05-05-session-end-profile.md` "Sub-checkpoint breakdown" section.
+
+- ✅ Dedup threshold tuning — swept 0.82, 0.85, 0.88; all three produce
+  identical confusion matrices (TP=6 FN=2 FP=0 TN=8). D05 and D08 score
+  below 0.82 in embedding space; no threshold in the safe range can catch
+  them. `_DEDUP_SIM_THRESHOLD` stays at 0.88. See
+  `2026-05-05-dedup-threshold-tuning.md`.
 
 - ✅ Re-run benches with expanded corpora — 30-case extraction corpus + 30-query
   / 100-fact retrieval corpus. Ceiling saturation confirmed broken; all legs now

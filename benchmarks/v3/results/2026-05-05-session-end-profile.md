@@ -80,6 +80,45 @@ short-circuits at 0.
 4. Lazy spaCy load: if spaCy is loaded eagerly during `Memory.from_config()`,
    moving it to first-use only could shave 1–2 s from `memory_init`.
 
+## Sub-checkpoint breakdown of `memory_init`
+
+Five session_end iterations from re-run 2026-05-05 (same infra; each process cold-start):
+
+| iter | init.imports | init.config | init.from_config | init.first_search | memory_init total |
+| ---: | -----------: | ----------: | ---------------: | ----------------: | ----------------: |
+| 1 | 0.496 s | 0.009 s | 2.977 s | 0.603 s | 4.086 s |
+| 2 | 0.504 s | 0.010 s | 5.230 s | 0.655 s | 6.401 s |
+| 3 | 0.557 s | 0.010 s | 6.399 s | 0.662 s | 7.629 s |
+| 4 | 0.501 s | 0.010 s | 4.840 s | 0.603 s | 5.955 s |
+| 5 | 0.513 s | 0.010 s | 8.037 s | 0.622 s | 9.182 s |
+
+Aggregate across 5 iterations:
+
+| sub-phase | mean | p50 | p95 |
+| --- | ---: | ---: | ---: |
+| init.imports | 0.514 s | 0.504 s | 0.547 s |
+| init.config | 0.010 s | 0.010 s | 0.010 s |
+| init.from_config | 5.497 s | 5.230 s | 7.536 s |
+| init.first_search | 0.629 s | 0.622 s | 0.659 s |
+| **memory_init total** | **6.651 s** | **6.401 s** | **8.719 s** |
+
+Note: `memory_init` total is higher in this run (mean 6.7 s vs 4.7 s in the prior profile) due to
+concurrent context-hook subprocess load on each iteration — both hooks share the same Qdrant + Ollama
+infra. The sub-phase ratios are the reliable signal; the totals are noisier here than in a
+serial-only run.
+
+`Memory.from_config()` is the dominant sub-phase at 83 % of mean `memory_init` (5.5 s of 6.7 s, p95
+7.5 s). It covers Qdrant client init, collection-ensure, and the spaCy `en_core_web_sm` pipeline
+load. `init.imports` is stable at ~0.5 s (mem0 + transitive imports), and `init.first_search`
+is stable at ~0.6 s. Both are smaller than one Qdrant round-trip. `init.config` (0.01 s) is
+negligible.
+
+**Verdict:** `Memory.from_config()` is the actual bottleneck inside `memory_init`. Lazy-loading
+mem0 imports would save at most 0.5 s (7 % of `memory_init`). The meaningful optimizations are:
+(1) connection pooling / persistent Qdrant client so collection-ensure runs once across sessions;
+(2) deferring spaCy pipeline load to first entity-link call instead of at `from_config()` time.
+Both target `init.from_config` rather than the import path.
+
 ## Open follow-ups
 
 - Add sub-checkpoints inside `_get_memory()`: (a) after `import mem0`, (b)

@@ -75,15 +75,25 @@ def _get_memory():
     if _memory is not None:
         return _memory
 
+    t_imports = time.perf_counter()
     from mem0_mcp_selfhosted.config import build_config
     from mem0_mcp_selfhosted.server import register_providers
+    from mem0 import Memory
+    _emit_profile("session_end", "init.imports", t_imports)
 
+    t_config = time.perf_counter()
     config_dict, providers_info = build_config()
     register_providers(providers_info)
+    _emit_profile("session_end", "init.config", t_config)
 
-    from mem0 import Memory
-
+    t_from_config = time.perf_counter()
     _memory = Memory.from_config(config_dict)
+    _emit_profile("session_end", "init.from_config", t_from_config)
+
+    t_first_search = time.perf_counter()
+    _memory.search(query="warmup", limit=1, filters={"user_id": "__warmup__"})
+    _emit_profile("session_end", "init.first_search", t_first_search)
+
     return _memory
 
 

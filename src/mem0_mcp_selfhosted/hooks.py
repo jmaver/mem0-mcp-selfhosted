@@ -90,10 +90,6 @@ def _get_memory():
     _memory = Memory.from_config(config_dict)
     _emit_profile("session_end", "init.from_config", t_from_config)
 
-    t_first_search = time.perf_counter()
-    _memory.search(query="warmup", limit=1, filters={"user_id": "__warmup__"})
-    _emit_profile("session_end", "init.first_search", t_first_search)
-
     return _memory
 
 

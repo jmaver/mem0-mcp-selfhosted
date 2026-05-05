@@ -82,10 +82,15 @@ short-circuits at 0.
 
 ## Sub-checkpoint breakdown of `memory_init`
 
-Five session_end iterations from re-run 2026-05-05 (same infra; each process cold-start):
+Five session_end iterations from re-run 2026-05-05 (same infra; each process cold-start). The
+original probe also measured an `init.first_search` warmup phase; that warmup call was reverted
+in `_get_memory()` after a /simplify pass showed it added ~0.6 s/cold-start with no measured
+reduction in subsequent `mem.add()` latency. The numbers below are from the rerun *with* the
+warmup, which inflates `memory_init` totals by the `first_search` row; current code skips that
+phase entirely.
 
-| iter | init.imports | init.config | init.from_config | init.first_search | memory_init total |
-| ---: | -----------: | ----------: | ---------------: | ----------------: | ----------------: |
+| iter | init.imports | init.config | init.from_config | init.first_search (reverted) | memory_init total |
+| ---: | -----------: | ----------: | ---------------: | ---------------------------: | ----------------: |
 | 1 | 0.496 s | 0.009 s | 2.977 s | 0.603 s | 4.086 s |
 | 2 | 0.504 s | 0.010 s | 5.230 s | 0.655 s | 6.401 s |
 | 3 | 0.557 s | 0.010 s | 6.399 s | 0.662 s | 7.629 s |
@@ -99,25 +104,26 @@ Aggregate across 5 iterations:
 | init.imports | 0.514 s | 0.504 s | 0.547 s |
 | init.config | 0.010 s | 0.010 s | 0.010 s |
 | init.from_config | 5.497 s | 5.230 s | 7.536 s |
-| init.first_search | 0.629 s | 0.622 s | 0.659 s |
+| init.first_search (reverted) | 0.629 s | 0.622 s | 0.659 s |
 | **memory_init total** | **6.651 s** | **6.401 s** | **8.719 s** |
 
 Note: `memory_init` total is higher in this run (mean 6.7 s vs 4.7 s in the prior profile) due to
 concurrent context-hook subprocess load on each iteration — both hooks share the same Qdrant + Ollama
 infra. The sub-phase ratios are the reliable signal; the totals are noisier here than in a
-serial-only run.
+serial-only run. After the warmup revert, expected `memory_init` is ~6.0 s mean / ~8.1 s p95.
 
 `Memory.from_config()` is the dominant sub-phase at 83 % of mean `memory_init` (5.5 s of 6.7 s, p95
 7.5 s). It covers Qdrant client init, collection-ensure, and the spaCy `en_core_web_sm` pipeline
-load. `init.imports` is stable at ~0.5 s (mem0 + transitive imports), and `init.first_search`
-is stable at ~0.6 s. Both are smaller than one Qdrant round-trip. `init.config` (0.01 s) is
+load. `init.imports` is stable at ~0.5 s (mem0 + transitive imports). `init.config` (0.01 s) is
 negligible.
 
 **Verdict:** `Memory.from_config()` is the actual bottleneck inside `memory_init`. Lazy-loading
 mem0 imports would save at most 0.5 s (7 % of `memory_init`). The meaningful optimizations are:
 (1) connection pooling / persistent Qdrant client so collection-ensure runs once across sessions;
 (2) deferring spaCy pipeline load to first entity-link call instead of at `from_config()` time.
-Both target `init.from_config` rather than the import path.
+Both target `init.from_config` rather than the import path. The speculative warmup search was
+reverted: it added ~0.6 s/cold-start without a measured reduction in `mem.add()` latency, and
+`Memory.from_config()` already loads the embedder model as a side-effect.
 
 ## Open follow-ups
 

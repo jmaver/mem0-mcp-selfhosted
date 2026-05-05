@@ -41,14 +41,37 @@ OAT_HEADERS = {
 }
 
 # --- Structured Output Schemas ---
-# Two schemas for the two call types in mem0ai's pipeline.
+# mem0 v3's ADDITIVE_EXTRACTION_PROMPT instructs the LLM to return
+# ``{"memory": [{"id": ..., "text": ..., "attributed_to": ..., ...}]}`` and
+# parses the response with ``.get("memory", [])``. The pre-v3 ``{"facts": [...]}``
+# shape silently extracted zero memories under the structured-output path.
+# ``linked_memory_ids`` is optional per the prompt, so it's not in ``required``.
 
 FACT_RETRIEVAL_SCHEMA = {
     "type": "object",
     "properties": {
-        "facts": {"type": "array", "items": {"type": "string"}},
+        "memory": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "text": {"type": "string"},
+                    "attributed_to": {
+                        "type": "string",
+                        "enum": ["user", "assistant"],
+                    },
+                    "linked_memory_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": ["id", "text", "attributed_to"],
+                "additionalProperties": False,
+            },
+        },
     },
-    "required": ["facts"],
+    "required": ["memory"],
     "additionalProperties": False,
 }
 

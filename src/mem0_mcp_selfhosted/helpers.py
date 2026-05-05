@@ -173,41 +173,51 @@ _BULK_PAGE_SIZE = 1000
 
 
 def _iter_vector_store_list(memory: Any, filters: dict[str, Any]) -> Any:
-    """Yield every record matching `filters` from the vector store.
+    """Yield every record matching ``filters`` from the vector store.
 
-    Qdrant.list() defaults top_k=100, which would silently truncate large
-    result sets — we request larger pages and follow the offset cursor
-    until the store reports fewer rows than requested (i.e. exhausted).
+    Qdrant has the only paged API among the stores mem0 supports, but its
+    ``Qdrant.list()`` wrapper drops the cursor: it accepts only ``filters``
+    and ``top_k`` (≤ 100 by default) and returns ``(records, next_offset)``
+    from a single ``client.scroll`` call without continuing. For
+    ``safe_bulk_delete`` and ``list_entities_facet``'s scroll fallback to
+    actually visit every record, we have to drive ``client.scroll`` directly
+    when the wrapper exposes the underlying Qdrant client. Everything else
+    falls back to the wrapper's single page.
     """
-    offset: Any = None
-    while True:
-        kwargs: dict[str, Any] = {"filters": filters, "top_k": _BULK_PAGE_SIZE}
-        if offset is not None:
-            kwargs["offset"] = offset
-        try:
-            result = memory.vector_store.list(**kwargs)
-        except TypeError:
-            # If the first call (no offset) raised, it's a real signature
-            # incompatibility — surface it. If a subsequent call with offset
-            # raised, the wrapper doesn't support paging; page 1 is already
-            # yielded, so warn and stop rather than re-yielding it.
-            if offset is None:
-                raise
-            logger.warning(
-                "vector_store.list does not accept offset; results past the first page may be missed",
+    store = memory.vector_store
+    qdrant_client = getattr(store, "client", None)
+    create_filter = getattr(store, "_create_filter", None)
+    collection_name = getattr(store, "collection_name", None)
+
+    if qdrant_client is not None and callable(create_filter) and collection_name is not None:
+        scroll_filter = create_filter(filters) if filters else None
+        offset: Any = None
+        while True:
+            page, next_offset = qdrant_client.scroll(
+                collection_name=collection_name,
+                scroll_filter=scroll_filter,
+                limit=_BULK_PAGE_SIZE,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
             )
-            return
+            yield from page
+            if not next_offset or len(page) < _BULK_PAGE_SIZE:
+                return
+            offset = next_offset
 
-        if isinstance(result, tuple):
-            page, next_offset = result[0], result[1] if len(result) > 1 else None
-        else:
-            page, next_offset = result, None
-
-        yield from page
-
-        if next_offset is None or len(page) < _BULK_PAGE_SIZE:
-            return
-        offset = next_offset
+    # Non-Qdrant vector stores: best-effort single page from the wrapper.
+    # If a caller hits this with > _BULK_PAGE_SIZE records they'll silently
+    # see only the first page; warn so it's at least visible in logs.
+    result = store.list(filters=filters, top_k=_BULK_PAGE_SIZE)
+    page = result[0] if isinstance(result, tuple) else result
+    yield from page
+    if len(page) >= _BULK_PAGE_SIZE:
+        logger.warning(
+            "vector_store has no Qdrant client; pagination unsupported. "
+            "Returned %d records — additional records may exist.",
+            len(page),
+        )
 
 
 def _extract_id(item: Any) -> str:

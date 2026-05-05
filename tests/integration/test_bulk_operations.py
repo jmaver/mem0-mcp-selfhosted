@@ -30,7 +30,8 @@ class TestBulkOperations:
 
         assert count >= 1  # LLM may merge similar facts; at least 1 must exist
 
-        remaining = memory_instance.get_all(user_id=test_user_id)
+        # v3: get_all takes filters dict, not top-level user_id kwarg.
+        remaining = memory_instance.get_all(filters={"user_id": test_user_id})
         assert len(remaining.get("results", [])) == 0
 
     def test_list_entities_facet(self, memory_instance):

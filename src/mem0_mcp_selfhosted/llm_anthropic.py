@@ -41,14 +41,37 @@ OAT_HEADERS = {
 }
 
 # --- Structured Output Schemas ---
-# Two schemas for the two call types in mem0ai's pipeline.
+# mem0 v3's ADDITIVE_EXTRACTION_PROMPT instructs the LLM to return
+# ``{"memory": [{"id": ..., "text": ..., "attributed_to": ..., ...}]}`` and
+# parses the response with ``.get("memory", [])``. The pre-v3 ``{"facts": [...]}``
+# shape silently extracted zero memories under the structured-output path.
+# ``linked_memory_ids`` is optional per the prompt, so it's not in ``required``.
 
 FACT_RETRIEVAL_SCHEMA = {
     "type": "object",
     "properties": {
-        "facts": {"type": "array", "items": {"type": "string"}},
+        "memory": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "text": {"type": "string"},
+                    "attributed_to": {
+                        "type": "string",
+                        "enum": ["user", "assistant"],
+                    },
+                    "linked_memory_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": ["id", "text", "attributed_to"],
+                "additionalProperties": False,
+            },
+        },
     },
-    "required": ["facts"],
+    "required": ["memory"],
     "additionalProperties": False,
 }
 
@@ -79,6 +102,45 @@ MEMORY_UPDATE_SCHEMA = {
 
 # Model prefixes that support structured outputs (output_config).
 _STRUCTURED_OUTPUT_PREFIXES = ("claude-opus-4", "claude-sonnet-4", "claude-haiku-4")
+
+
+def _extract_text_block(response: anthropic.types.Message) -> str | None:
+    """Return the first text-block's ``.text``, or None.
+
+    Scans rather than taking ``content[0]``: some endpoints (e.g. DashScope
+    Qwen3.6, GLM, or any Anthropic config with extended thinking) emit a
+    ``ThinkingBlock`` first whose ``.thinking`` is non-None but ``.text`` is
+    missing. Duck-typed for test-mock compatibility.
+    """
+    if not response.content:
+        return None
+    for block in response.content:
+        text = getattr(block, "text", None)
+        if isinstance(text, str):
+            return text
+    return None
+
+
+def _parse_retry_after(exc: anthropic.APIStatusError) -> int | None:
+    """Extract the ``Retry-After`` header value (seconds) from a 429 response.
+
+    Returns None if the header is missing or unparseable. The Anthropic SDK
+    surfaces the original response on ``exc.response``; the header may be in
+    seconds (most common) or HTTP-date format (rare). We only handle seconds —
+    HTTP-date falls through to the caller's default backoff.
+    """
+    response = getattr(exc, "response", None)
+    if response is None:
+        return None
+    headers = getattr(response, "headers", None) or {}
+    raw = headers.get("retry-after") or headers.get("Retry-After")
+    if not raw:
+        return None
+    try:
+        seconds = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return max(1, seconds)
 
 
 def extract_json(text: str) -> str:
@@ -134,7 +196,10 @@ class AnthropicOATLLM(LLMBase):
     def __init__(self, config: AnthropicOATConfig | None = None):
         super().__init__(config)
         if not isinstance(self.config, AnthropicOATConfig):
-            # Convert BaseLlmConfig → AnthropicOATConfig preserving attributes
+            # Convert BaseLlmConfig → AnthropicOATConfig preserving attributes.
+            # Custom fields (auth_token, anthropic_base_url) are read off the
+            # source config via getattr so they survive when mem0ai passes a
+            # plain BaseLlmConfig built from a dict that included them.
             base = self.config
             self.config = AnthropicOATConfig(
                 model=base.model,
@@ -143,6 +208,8 @@ class AnthropicOATLLM(LLMBase):
                 temperature=base.temperature,
                 top_p=base.top_p,
                 top_k=base.top_k,
+                auth_token=getattr(base, "auth_token", None),
+                anthropic_base_url=getattr(base, "anthropic_base_url", None),
             )
 
         # Resolve token: config field → fallback chain
@@ -152,9 +219,7 @@ class AnthropicOATLLM(LLMBase):
         # In-memory OAuth state for OAT token self-refresh
         self._refresh_token: str | None = None
         self._expires_at: int | None = None
-        self._refresh_threshold: int = int(
-            env("MEM0_OAT_REFRESH_THRESHOLD_SECONDS", "1800")
-        )
+        self._refresh_threshold: int = int(env("MEM0_OAT_REFRESH_THRESHOLD_SECONDS", "1800"))
 
         if token and is_oat_token(token):
             creds = read_credentials_full()
@@ -189,6 +254,11 @@ class AnthropicOATLLM(LLMBase):
     _RETRYABLE_STATUS_CODES = (500, 502, 503, 529)
     _MAX_RETRIES = 2
     _BACKOFF_SECONDS = (1, 2)
+    # 429 is split out: rate-limit retry is conservative (one shot, longer wait)
+    # and respects the server's Retry-After header when present, so we don't
+    # hammer a window that's already drained.
+    _RATE_LIMIT_MAX_RETRIES = 1
+    _RATE_LIMIT_DEFAULT_BACKOFF_SECONDS = 30
 
     def _try_piggyback_refresh(self) -> str | None:
         """Step 1: Re-read credentials file for a new token (piggyback on Claude Code).
@@ -286,7 +356,7 @@ class AnthropicOATLLM(LLMBase):
         try:
             response = self._call_with_transient_retry(params)
         except anthropic.AuthenticationError as auth_err:
-            if not is_oat_token(self._current_token):
+            if not self._current_token or not is_oat_token(self._current_token):
                 raise
 
             # Step 1: Piggyback on credentials file
@@ -314,34 +384,75 @@ class AnthropicOATLLM(LLMBase):
                         raise auth_err
 
         if response.stop_reason == "max_tokens":
-            logger.warning(
-                "[mem0] Anthropic response truncated for model %s", self.config.model
-            )
+            logger.warning("[mem0] Anthropic response truncated for model %s", self.config.model)
 
         return response
 
     def _call_with_transient_retry(self, params: dict) -> anthropic.types.Message:
-        """Call the API with retry-with-backoff for transient server errors."""
+        """Call the API with retry-with-backoff for transient server errors.
+
+        Two distinct retry paths share this method:
+        - 5xx server errors: short backoff, up to ``_MAX_RETRIES`` attempts.
+        - 429 rate limit: longer backoff, only ``_RATE_LIMIT_MAX_RETRIES`` attempts,
+          honoring the ``retry-after`` response header when the server provides it.
+        """
         last_exc: Exception | None = None
-        for attempt in range(1 + self._MAX_RETRIES):
+        rate_limit_attempts = 0
+        max_attempts = 1 + self._MAX_RETRIES
+        for attempt in range(max_attempts):
             try:
                 return self.client.messages.create(**params)
             except anthropic.APIStatusError as exc:
+                is_last_attempt = attempt == max_attempts - 1
+                if exc.status_code == 429:
+                    # 429 retries share ``attempt``, so a prior 429 tightens the 5xx budget —
+                    # intentional; keeps total retry cost capped at ``_MAX_RETRIES``.
+                    if rate_limit_attempts >= self._RATE_LIMIT_MAX_RETRIES or is_last_attempt:
+                        raise
+                    rate_limit_attempts += 1
+                    delay = _parse_retry_after(exc) or self._RATE_LIMIT_DEFAULT_BACKOFF_SECONDS
+                    logger.warning(
+                        "[mem0] Anthropic 429 rate limit (retry %d/%d), backing off %ds",
+                        rate_limit_attempts,
+                        self._RATE_LIMIT_MAX_RETRIES,
+                        delay,
+                    )
+                    time.sleep(delay)
+                    last_exc = exc
+                    continue
                 if exc.status_code not in self._RETRYABLE_STATUS_CODES:
                     raise
                 last_exc = exc
-                if attempt < self._MAX_RETRIES:
+                if not is_last_attempt:
                     delay = self._BACKOFF_SECONDS[attempt]
                     logger.warning(
                         "[mem0] Anthropic %d error (attempt %d/%d), retrying in %ds",
-                        exc.status_code, attempt + 1, 1 + self._MAX_RETRIES, delay,
+                        exc.status_code,
+                        attempt + 1,
+                        max_attempts,
+                        delay,
                     )
                     time.sleep(delay)
         raise last_exc  # type: ignore[misc]
 
     def _supports_structured_output(self) -> bool:
-        """Check if the configured model supports structured outputs."""
-        return self.config.model.startswith(_STRUCTURED_OUTPUT_PREFIXES)
+        """Check if the configured model + auth path supports structured outputs.
+
+        ``output_config`` is gated by the ``anthropic-beta: claude-code-…``
+        header, which we only send for OAT tokens (see ``OAT_HEADERS``).
+        Real API keys hitting the same path silently return empty content,
+        so we have to gate on both:
+
+        1. Model prefix is in the structured-output allowlist
+        2. Current auth is OAT (so the beta headers are attached)
+
+        Falls through to the JSON-extraction path otherwise — slightly less
+        reliable but works on any auth.
+        """
+        model = self.config.model
+        if not (isinstance(model, str) and model.startswith(_STRUCTURED_OUTPUT_PREFIXES)):
+            return False
+        return is_oat_token(self._current_token or "")
 
     def _select_schema(self, messages: list[dict]) -> dict:
         """Select structured output schema based on call type.
@@ -357,7 +468,7 @@ class AnthropicOATLLM(LLMBase):
 
     @staticmethod
     def _parse_response(response: anthropic.types.Message) -> dict:
-        """Convert Anthropic tool_use blocks to dict format for graph_memory.py.
+        """Convert Anthropic tool_use blocks to dict format expected by mem0ai.
 
         Returns: {"content": "...", "tool_calls": [{"name": ..., "arguments": ...}]}
         """
@@ -368,17 +479,19 @@ class AnthropicOATLLM(LLMBase):
             if block.type == "text":
                 text_parts.append(block.text)
             elif block.type == "tool_use":
-                tool_calls.append({
-                    "name": block.name,
-                    "arguments": block.input,  # Already a dict, no JSON parsing needed
-                })
+                tool_calls.append(
+                    {
+                        "name": block.name,
+                        "arguments": block.input,  # Already a dict, no JSON parsing needed
+                    }
+                )
 
         return {
             "content": "\n".join(text_parts),
             "tool_calls": tool_calls,
         }
 
-    def generate_response(
+    def generate_response(  # type: ignore[override]
         self,
         messages: list[dict],
         response_format: dict | None = None,
@@ -419,11 +532,13 @@ class AnthropicOATLLM(LLMBase):
             for tool in tools:
                 if "function" in tool:
                     fn = tool["function"]
-                    anthropic_tools.append({
-                        "name": fn["name"],
-                        "description": fn.get("description", ""),
-                        "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
-                    })
+                    anthropic_tools.append(
+                        {
+                            "name": fn["name"],
+                            "description": fn.get("description", ""),
+                            "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
+                        }
+                    )
                 else:
                     anthropic_tools.append(tool)
             params["tools"] = anthropic_tools
@@ -457,15 +572,16 @@ class AnthropicOATLLM(LLMBase):
             # else: no output_config — rely on extractJson fallback
 
             response = self._call_api(params)
-            if not response.content:
-                logger.warning("Anthropic API returned empty content (structured output path)")
+            text = _extract_text_block(response)
+            if text is None:
+                logger.warning("Anthropic API returned empty or non-text content (structured output path)")
                 return ""
-            text = response.content[0].text
             return extract_json(text)
 
         # Plain text response (no tools, no response_format)
         response = self._call_api(params)
-        if not response.content:
-            logger.warning("Anthropic API returned empty content (plain text path)")
+        text = _extract_text_block(response)
+        if text is None:
+            logger.warning("Anthropic API returned empty or non-text content (plain text path)")
             return ""
-        return response.content[0].text
+        return text

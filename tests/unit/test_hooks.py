@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from io import StringIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -27,25 +26,15 @@ def _capture_output(func, stdin_data: str = "{}") -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 6.1  _get_user_id
+# 6.1  get_default_user_id (previously _get_user_id — now from helpers)
 # ---------------------------------------------------------------------------
 
 
-class TestGetUserId:
-    def test_returns_env_var_when_set(self, monkeypatch):
-        monkeypatch.setenv("MEM0_USER_ID", "alice")
-        assert hooks._get_user_id() == "alice"
-
-    def test_returns_default_when_unset(self, monkeypatch):
-        monkeypatch.delenv("MEM0_USER_ID", raising=False)
-        assert hooks._get_user_id() == "user"
-
-    def test_dotenv_loaded_before_get_user_id(self):
-        """load_dotenv() runs at module init, so .env values are visible."""
-        # Verify the module-level load_dotenv() import exists —
-        # this guards against regression of the bug where _get_user_id()
-        # was called before load_dotenv() in context_main().
+class TestGetDefaultUserIdInHooks:
+    def test_dotenv_loaded_at_module_level(self):
+        """load_dotenv() runs at module init, so MEM0_USER_ID from .env is visible."""
         import inspect
+
         source = inspect.getsource(hooks)
         # load_dotenv() should be called at module level, not just inside a function
         lines = source.split("\n")
@@ -60,6 +49,14 @@ class TestGetUserId:
                 break
         assert found_module_level_call, "load_dotenv() must be called at module level"
 
+    def test_context_main_uses_get_default_user_id(self):
+        """context_main imports get_default_user_id from helpers (not _get_user_id)."""
+        import inspect
+
+        source = inspect.getsource(hooks)
+        assert "get_default_user_id" in source, "hooks must use helpers.get_default_user_id"
+        assert "_get_user_id" not in source, "_get_user_id was removed; use helpers.get_default_user_id"
+
 
 # ---------------------------------------------------------------------------
 # 6.2  _get_memory
@@ -73,26 +70,19 @@ class TestGetMemory:
         with patch.object(hooks, "_memory", sentinel):
             assert hooks._get_memory() is sentinel
 
-    def test_graph_disabled_in_env(self, monkeypatch):
-        """_get_memory() sets MEM0_ENABLE_GRAPH=false and caches result."""
-        calls = []
-
-        def fake_build_config():
-            calls.append(os.environ.get("MEM0_ENABLE_GRAPH"))
-            return {}, [], None
-
+    def test_initializes_and_caches(self, monkeypatch):
+        """_get_memory() initializes Memory.from_config and caches result."""
         fake_mem = MagicMock(name="FreshMemory")
 
         # monkeypatch auto-restores _memory after the test
         monkeypatch.setattr(hooks, "_memory", None)
         with (
-            patch("mem0_mcp_selfhosted.config.build_config", fake_build_config),
+            patch("mem0_mcp_selfhosted.config.build_config", return_value=({}, [])),
             patch("mem0_mcp_selfhosted.server.register_providers"),
             patch("mem0.Memory.from_config", return_value=fake_mem),
         ):
             result = hooks._get_memory()
 
-        assert calls == ["false"]
         assert result is fake_mem
         # Verify the result was cached in the module global
         assert hooks._memory is fake_mem
@@ -207,21 +197,24 @@ class TestContextMain:
             result = _capture_output(hooks.context_main, self._make_stdin())
 
         ctx = self._get_additional_context(result)
-        lines = [l for l in ctx.split("\n") if l and l[0].isdigit()]
+        lines = [line for line in ctx.split("\n") if line and line[0].isdigit()]
         assert len(lines) == hooks._MAX_MEMORIES
 
     def test_empty_cwd_uses_project_fallback(self):
         """Empty cwd falls back to 'project' in search queries."""
         mock_mem = MagicMock()
-        mock_mem.search.return_value = {"results": [
-            {"id": "m1", "memory": "some fact"},
-        ]}
+        mock_mem.search.return_value = {
+            "results": [
+                {"id": "m1", "memory": "some fact"},
+            ]
+        }
 
         with patch.object(hooks, "_get_memory", return_value=mock_mem):
             result = _capture_output(hooks.context_main, self._make_stdin(cwd=""))
 
-        # Verify search was called with 'project' fallback in user_id
-        first_uid = mock_mem.search.call_args_list[0].kwargs["user_id"]
+        # v3: user_id is inside the filters dict, not a top-level kwarg
+        first_filters = mock_mem.search.call_args_list[0].kwargs["filters"]
+        first_uid = first_filters["user_id"]
         assert "project" in first_uid
         assert self._get_additional_context(result) is not None
 
@@ -272,16 +265,19 @@ class TestReadRecentMessages:
     def test_malformed_jsonl_lines_skipped(self, tmp_path):
         """Corrupted lines in transcript are silently skipped."""
         p = tmp_path / "transcript.jsonl"
+        # Content padded to clear the _MIN_EXCHANGE_LEN noise filter.
+        valid_user = "first valid message that is long enough to clear the filter"
+        valid_asst = "second valid response that is also long enough to clear the filter"
         p.write_text(
-            '{"role": "user", "content": "first valid message is long enough"}\n'
-            'THIS IS NOT JSON\n'
-            '{"role": "assistant", "content": "second valid response text"}\n'
-            '{ALSO BROKEN\n'
+            f'{{"role": "user", "content": "{valid_user}"}}\n'
+            "THIS IS NOT JSON\n"
+            f'{{"role": "assistant", "content": "{valid_asst}"}}\n'
+            "{ALSO BROKEN\n"
         )
         result = hooks._read_recent_messages(str(p))
         assert len(result) == 2
-        assert result[0] == ("user", "first valid message is long enough")
-        assert result[1] == ("assistant", "second valid response text")
+        assert result[0] == ("user", valid_user)
+        assert result[1] == ("assistant", valid_asst)
 
     def test_empty_file_returns_empty(self, tmp_path):
         """Empty transcript returns empty list."""
@@ -292,50 +288,147 @@ class TestReadRecentMessages:
     def test_returns_recent_window(self, tmp_path):
         """Returns the last _RECENT_WINDOW messages in chronological order."""
         p = tmp_path / "transcript.jsonl"
+        # Content must clear _MIN_EXCHANGE_LEN (noise filter) to exercise window logic.
         lines = [
-            json.dumps({"role": "user", "content": "first user msg"}),
-            json.dumps({"role": "assistant", "content": "first assistant msg"}),
-            json.dumps({"role": "user", "content": "second user msg"}),
-            json.dumps({"role": "assistant", "content": "second assistant msg"}),
+            json.dumps({"role": "user", "content": "first user message with enough length to clear the filter"}),
+            json.dumps({"role": "assistant", "content": "first assistant response with sufficient durable content"}),
+            json.dumps({"role": "user", "content": "second user message with enough length to clear the filter"}),
+            json.dumps({"role": "assistant", "content": "second assistant response with sufficient durable content"}),
         ]
         p.write_text("\n".join(lines))
         result = hooks._read_recent_messages(str(p))
-        # 4 messages fits within _RECENT_WINDOW, so all are returned
         assert len(result) == 4
-        assert result[-1] == ("assistant", "second assistant msg")
-        assert result[-2] == ("user", "second user msg")
+        assert result[-1] == ("assistant", "second assistant response with sufficient durable content")
+        assert result[-2] == ("user", "second user message with enough length to clear the filter")
 
     def test_window_truncates_old_messages(self, tmp_path):
         """Transcripts longer than _RECENT_WINDOW are truncated to recent end."""
         p = tmp_path / "transcript.jsonl"
         total = hooks._RECENT_WINDOW + 10  # always more than the window
         lines = []
+        # Pad each message so the bytes-truncation filter has something to keep.
+        pad = "x" * 40
         for i in range(total):
             role = "user" if i % 2 == 0 else "assistant"
-            lines.append(json.dumps({"role": role, "content": f"msg {i}"}))
+            lines.append(json.dumps({"role": role, "content": f"msg {i:03d} {pad}"}))
         p.write_text("\n".join(lines))
         result = hooks._read_recent_messages(str(p))
         assert len(result) == hooks._RECENT_WINDOW
-        # Should contain only the last _RECENT_WINDOW messages
         first_kept = total - hooks._RECENT_WINDOW
-        assert result[0][1] == f"msg {first_kept}"
-        assert result[-1][1] == f"msg {total - 1}"
+        assert result[0][1].startswith(f"msg {first_kept:03d}")
+        assert result[-1][1].startswith(f"msg {total - 1:03d}")
 
     def test_skips_non_user_assistant_roles(self, tmp_path):
         """tool_use, tool_result, system roles are excluded from the window."""
         p = tmp_path / "transcript.jsonl"
         lines = [
-            json.dumps({"role": "user", "content": "user request"}),
-            json.dumps({"role": "tool_use", "content": "tool call"}),
-            json.dumps({"role": "tool_result", "content": "tool output"}),
-            json.dumps({"role": "system", "content": "system prompt"}),
-            json.dumps({"role": "assistant", "content": "assistant response"}),
+            json.dumps({"role": "user", "content": "user request that is long enough to pass the noise filter"}),
+            json.dumps({"role": "tool_use", "content": "tool call that is also long enough to pass the filter"}),
+            json.dumps({"role": "tool_result", "content": "tool output that is similarly long enough"}),
+            json.dumps({"role": "system", "content": "system prompt that is also long enough to pass"}),
+            json.dumps({"role": "assistant", "content": "assistant response that is long enough to pass"}),
         ]
         p.write_text("\n".join(lines))
         result = hooks._read_recent_messages(str(p))
         assert len(result) == 2
-        assert result[0] == ("user", "user request")
-        assert result[1] == ("assistant", "assistant response")
+        assert result[0] == ("user", "user request that is long enough to pass the noise filter")
+        assert result[1] == ("assistant", "assistant response that is long enough to pass")
+
+
+# ---------------------------------------------------------------------------
+# _is_noise — pre-filter that drops transient session content before extraction
+# ---------------------------------------------------------------------------
+
+
+class TestIsNoise:
+    def test_user_pings_are_noise(self):
+        """Pure ping-style user messages are the only short user content dropped."""
+        assert hooks._is_noise("user", "ok thanks") is True
+        assert hooks._is_noise("user", "thanks") is True
+        assert hooks._is_noise("user", "OK!") is True
+        assert hooks._is_noise("user", "yes") is True
+
+    def test_short_user_directive_kept(self):
+        """Short user directives carry durable signal and must not be filtered."""
+        # Regression: prior 40-char cutoff dropped these. Codex flagged it as
+        # high-severity recall loss for SessionEnd extraction.
+        assert hooks._is_noise("user", "use postgres 17") is False
+        assert hooks._is_noise("user", "switch to dark mode") is False
+        assert hooks._is_noise("user", "we deploy on AWS") is False
+
+    def test_empty_content_is_noise(self):
+        assert hooks._is_noise("user", "") is True
+        assert hooks._is_noise("assistant", "   ") is True
+
+    def test_short_assistant_message_is_noise(self):
+        """Sub-4-char assistant messages are pings ('ok', 'yes')."""
+        assert hooks._is_noise("assistant", "ok") is True
+        assert hooks._is_noise("assistant", "yes") is True
+
+    def test_assistant_tool_narration_is_noise(self):
+        """Short assistant messages starting with reliable-narration prefixes are dropped."""
+        assert hooks._is_noise("assistant", "Let me check the file structure first.") is True
+        assert hooks._is_noise("assistant", "Running the test suite now to verify.") is True
+        assert hooks._is_noise("assistant", "Looking at the auth module quickly.") is True
+
+    def test_assistant_decision_with_ambiguous_prefix_kept(self):
+        """Short assistant decisions starting with i'll/i will/let's must NOT be filtered.
+
+        Regression for codex review: 'I'll use PostgreSQL 17' and 'Let's switch to Redis'
+        are durable decisions, not narration; they were being dropped under the prior
+        prefix list.
+        """
+        assert hooks._is_noise("assistant", "I'll use PostgreSQL 17 for this project.") is False
+        assert hooks._is_noise("assistant", "Let's switch to Redis for the cache layer.") is False
+        assert hooks._is_noise("assistant", "I will refactor auth.py to use OAuth.") is False
+
+    def test_long_assistant_narration_kept(self):
+        """A 200+ char assistant message is durable enough to keep, even if it starts with narration."""
+        long_msg = "Let me explain the architecture: " + ("the auth layer wraps everything " * 8)
+        assert hooks._is_noise("assistant", long_msg) is False
+
+    def test_user_narration_prefix_not_filtered(self):
+        """User messages aren't subject to narration-prefix filtering — only ping detection."""
+        msg = "let me know when the deploy finishes please thank you very much"
+        assert hooks._is_noise("user", msg) is False
+
+    def test_assistant_code_block_kept(self):
+        """A code-fence answer (config snippet, final command) is durable signal."""
+        # Regression: prior heuristic dropped any short pure-code block.
+        # Codex flagged this as recall loss — code-only answers often contain
+        # the durable artifact the hook is supposed to save.
+        code = "```python\nprint('hi')\nx = 1\n```"
+        assert hooks._is_noise("assistant", code) is False
+
+    def test_durable_user_message_kept(self):
+        """Realistic user content with project info is preserved."""
+        msg = "we use postgres with prisma in this project, tests run via pytest -v"
+        assert hooks._is_noise("user", msg) is False
+
+
+# ---------------------------------------------------------------------------
+# _dedup_against_existing — post-add semantic dedup using v3 search contract
+# ---------------------------------------------------------------------------
+
+
+class TestDedupAgainstExisting:
+    def test_search_uses_top_k_not_limit(self):
+        """v3 contract: search uses top_k. limit was the v0.3 spelling."""
+        # Regression for codex finding: passing limit=3 silently disables the
+        # bound on v3, letting the search return many more hits than intended
+        # and pushing the SessionEnd hook closer to its budget.
+        mock_mem = MagicMock()
+        mock_mem.get.return_value = {"memory": "test fact", "created_at": "2026-01-01"}
+        mock_mem.search.return_value = {"results": []}
+
+        hooks._dedup_against_existing(mock_mem, ["mid1"], "user:proj")
+
+        assert mock_mem.search.called
+        kwargs = mock_mem.search.call_args.kwargs
+        assert "top_k" in kwargs, f"v3 contract requires top_k; got {list(kwargs)}"
+        assert "limit" not in kwargs
+        assert kwargs["top_k"] == 3
+        assert kwargs["filters"] == {"user_id": "user:proj"}
 
 
 # ---------------------------------------------------------------------------
@@ -362,10 +455,16 @@ class TestSessionEndMain:
 
     def test_normal_transcript_saves_to_mem0(self, tmp_path):
         """Normal session with meaningful messages saves to mem0."""
-        transcript = self._make_transcript(tmp_path, [
-            {"role": "user", "content": "Please refactor the authentication module to use JWT tokens instead of sessions"},
-            {"role": "assistant", "content": "I've refactored the auth module. The key changes are: replaced express-session with jsonwebtoken, added token refresh endpoint, and updated all middleware to validate JWT headers."},
-        ])
+        transcript = self._make_transcript(
+            tmp_path,
+            [
+                {"role": "user", "content": "Please refactor the authentication module to use JWT tokens instead of sessions"},
+                {
+                    "role": "assistant",
+                    "content": "I've refactored the auth module. The key changes are: replaced express-session with jsonwebtoken, added token refresh endpoint, and updated all middleware to validate JWT headers.",
+                },
+            ],
+        )
 
         mock_mem = MagicMock()
 
@@ -389,10 +488,13 @@ class TestSessionEndMain:
 
     def test_content_blocks_format(self, tmp_path):
         """Handles Claude Code's content block format."""
-        transcript = self._make_transcript(tmp_path, [
-            {"role": "user", "content": [{"type": "text", "text": "Implement a caching layer for the database queries with TTL support"}]},
-            {"role": "assistant", "content": [{"type": "text", "text": "Done. Added Redis-backed cache with configurable TTL per query type. Default is 5 minutes."}]},
-        ])
+        transcript = self._make_transcript(
+            tmp_path,
+            [
+                {"role": "user", "content": [{"type": "text", "text": "Implement a caching layer for the database queries with TTL support"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "Done. Added Redis-backed cache with configurable TTL per query type. Default is 5 minutes."}]},
+            ],
+        )
 
         mock_mem = MagicMock()
 
@@ -411,10 +513,13 @@ class TestSessionEndMain:
 
     def test_short_session_skipped(self, tmp_path):
         """Short sessions (both messages below threshold) are skipped."""
-        transcript = self._make_transcript(tmp_path, [
-            {"role": "user", "content": "hi"},
-            {"role": "assistant", "content": "Hello! How can I help?"},
-        ])
+        transcript = self._make_transcript(
+            tmp_path,
+            [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "Hello! How can I help?"},
+            ],
+        )
 
         mock_mem = MagicMock()
 
@@ -458,23 +563,28 @@ class TestSessionEndMain:
         with patch.object(hooks, "_get_memory", side_effect=RuntimeError("boom")):
             result = _capture_output(
                 hooks.session_end_main,
-                json.dumps({
-                    "session_id": "s",
-                    "cwd": "/x",
-                    "transcript_path": "/nonexistent",
-                }),
+                json.dumps(
+                    {
+                        "session_id": "s",
+                        "cwd": "/x",
+                        "transcript_path": "/nonexistent",
+                    }
+                ),
             )
 
         assert result == {"continue": True, "suppressOutput": True}
 
     def test_multi_exchange_captures_session_arc(self, tmp_path):
         """Multiple exchanges are included in the summary for richer context."""
-        transcript = self._make_transcript(tmp_path, [
-            {"role": "user", "content": "Let's add authentication to the API using JWT tokens"},
-            {"role": "assistant", "content": "I'll set up JWT authentication. First, I'll install jsonwebtoken and create the middleware."},
-            {"role": "user", "content": "Good. Now add refresh token rotation for security"},
-            {"role": "assistant", "content": "Added refresh token rotation. Tokens are stored in Redis with a 7-day TTL and single-use enforcement."},
-        ])
+        transcript = self._make_transcript(
+            tmp_path,
+            [
+                {"role": "user", "content": "Let's add authentication to the API using JWT tokens"},
+                {"role": "assistant", "content": "I'll set up JWT authentication. First, I'll install jsonwebtoken and create the middleware."},
+                {"role": "user", "content": "Good. Now add refresh token rotation for security"},
+                {"role": "assistant", "content": "Added refresh token rotation. Tokens are stored in Redis with a 7-day TTL and single-use enforcement."},
+            ],
+        )
 
         mock_mem = MagicMock()
 
@@ -492,10 +602,13 @@ class TestSessionEndMain:
 
     def test_mem_add_raises_returns_nonfatal(self, tmp_path):
         """Exception during mem.add() is caught and produces non-fatal response."""
-        transcript = self._make_transcript(tmp_path, [
-            {"role": "user", "content": "Please refactor the authentication module to use JWT tokens instead of sessions"},
-            {"role": "assistant", "content": "I've refactored the auth module. Replaced express-session with jsonwebtoken and added refresh endpoint."},
-        ])
+        transcript = self._make_transcript(
+            tmp_path,
+            [
+                {"role": "user", "content": "Please refactor the authentication module to use JWT tokens instead of sessions"},
+                {"role": "assistant", "content": "I've refactored the auth module. Replaced express-session with jsonwebtoken and added refresh endpoint."},
+            ],
+        )
 
         mock_mem = MagicMock()
         mock_mem.add.side_effect = RuntimeError("LLM timeout")
@@ -650,11 +763,7 @@ class TestInstallMain:
         assert len(settings["hooks"]["SessionStart"]) == 2
         assert len(settings["hooks"]["SessionEnd"]) == 2
         # Extract commands from nested hooks arrays
-        commands = [
-            handler["command"]
-            for group in settings["hooks"]["SessionStart"]
-            for handler in group.get("hooks", [])
-        ]
+        commands = [handler["command"] for group in settings["hooks"]["SessionStart"] for handler in group.get("hooks", [])]
         assert "other-hook" in commands
         assert "mem0-hook-context" in commands
 
@@ -762,11 +871,7 @@ class TestInstallMain:
         settings = json.loads((claude_dir / "settings.json").read_text())
         # Both hooks migrated, no duplicates for mem0-hook-context
         assert len(settings["hooks"]["SessionStart"]) == 2
-        commands = [
-            handler["command"]
-            for group in settings["hooks"]["SessionStart"]
-            for handler in group.get("hooks", [])
-        ]
+        commands = [handler["command"] for group in settings["hooks"]["SessionStart"] for handler in group.get("hooks", [])]
         assert "other-hook" in commands
         assert "mem0-hook-context" in commands
 

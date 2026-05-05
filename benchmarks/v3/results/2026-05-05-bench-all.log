@@ -1,0 +1,234 @@
+# bench_all.sh — 2026-05-05
+# provider_legs: anthropic-api,openai-cloud-nano,lmstudio-qwen35-mlx,lmstudio-gemma,ollama-qwen35-4b,ollama-qwen3-14b
+# limit: 30  hook_iters: 5  entity_iters: 10  sleep: 1s
+
+
+==========================================================
+  retrieval_quality
+==========================================================
+No Anthropic token found. Checked: MEM0_ANTHROPIC_TOKEN env var, /Users/jmaver/.claude/.credentials.json, ANTHROPIC_API_KEY env var. Anthropic LLM features will be disabled.
+Seeding 100 facts under user_id=bench-retrieval-1777992492 …
+
+Per-category recall@5 (mean across queries):
+category | n  | hybrid r@5 | semantic r@5 | delta 
+---------+----+------------+--------------+-------
+entity   | 7  | 1.0        | 1.0          | 0.0   
+keyword  | 13 | 0.962      | 0.962        | 0.0   
+semantic | 10 | 0.917      | 0.95         | -0.033
+
+Per-query (hybrid | semantic):
+qid | cat      | hybrid r@1 | sem r@1 | hybrid r@5 | sem r@5 | hybrid mrr | sem mrr
+----+----------+------------+---------+------------+---------+------------+--------
+Q01 | keyword  | 0.5        | 0.5     | 1.0        | 1.0     | 1.0        | 1.0    
+Q02 | keyword  | 0.5        | 0.5     | 1.0        | 1.0     | 1.0        | 1.0    
+Q03 | keyword  | 0.5        | 0.5     | 1.0        | 1.0     | 1.0        | 1.0    
+Q04 | keyword  | 0.0        | 0.0     | 1.0        | 1.0     | 0.5        | 0.5    
+Q05 | keyword  | 0.5        | 0.5     | 1.0        | 1.0     | 1.0        | 1.0    
+Q06 | semantic | 1.0        | 1.0     | 1.0        | 1.0     | 1.0        | 1.0    
+Q07 | semantic | 0.5        | 0.0     | 0.5        | 0.5     | 1.0        | 0.5    
+Q08 | semantic | 1.0        | 1.0     | 1.0        | 1.0     | 1.0        | 1.0    
+Q09 | entity   | 1.0        | 1.0     | 1.0        | 1.0     | 1.0        | 1.0    
+Q10 | entity   | 1.0        | 1.0     | 1.0        | 1.0     | 1.0        | 1.0    
+Q11 | keyword  | 1.0        | 1.0     | 1.0        | 1.0     | 1.0        | 1.0    
+Q12 | keyword  | 0.5        | 0.5     | 1.0        | 1.0     | 1.0        | 1.0    
+Q13 | keyword  | 1.0        | 1.0     | 1.0        | 1.0     | 1.0        | 1.0    
+Q14 | keyword  | 0.5        | 0.5     | 0.5        | 0.5     | 1.0        | 1.0    
+Q15 | semantic | 0.333      | 0.333   | 0.667      | 1.0     | 1.0        | 1.0    
+Q16 | semantic | 1.0        | 1.0     | 1.0        | 1.0     | 1.0        | 1.0    
+Q17 | semantic | 1.0        | 1.0     | 1.0        | 1.0     | 1.0        | 1.0    
+Q18 | entity   | 0.5        | 0.5     | 1.0        | 1.0     | 1.0        | 1.0    
+Q19 | entity   | 0.333      | 0.333   | 1.0        | 1.0     | 1.0        | 1.0    
+Q20 | entity   | 0.5        | 0.5     | 1.0        | 1.0     | 1.0        | 1.0    
+Q21 | keyword  | 0.5        | 0.5     | 1.0        | 1.0     | 1.0        | 1.0    
+Q22 | keyword  | 1.0        | 1.0     | 1.0        | 1.0     | 1.0        | 1.0    
+Q23 | keyword  | 1.0        | 1.0     | 1.0        | 1.0     | 1.0        | 1.0    
+Q24 | keyword  | 0.5        | 0.5     | 1.0        | 1.0     | 1.0        | 1.0    
+Q25 | semantic | 1.0        | 1.0     | 1.0        | 1.0     | 1.0        | 1.0    
+Q26 | semantic | 0.5        | 0.5     | 1.0        | 1.0     | 1.0        | 1.0    
+Q27 | semantic | 1.0        | 1.0     | 1.0        | 1.0     | 1.0        | 1.0    
+Q28 | semantic | 0.5        | 0.5     | 1.0        | 1.0     | 1.0        | 1.0    
+Q29 | entity   | 1.0        | 1.0     | 1.0        | 1.0     | 1.0        | 1.0    
+Q30 | entity   | 1.0        | 1.0     | 1.0        | 1.0     | 1.0        | 1.0    
+
+Cleaned up 100 memories under bench-retrieval-1777992492
+
+==========================================================
+  provider_battle
+==========================================================
+Running 30 cases × 6 legs (sleep=1.0s) …
+
+=== anthropic-api (anthropic / claude-sonnet-4-6) ===
+  FE01 (easy): F1=1.00 recall=1.00 hallucinated=0
+  FE02 (easy): F1=1.00 recall=1.00 hallucinated=0
+  FE03 (easy): F1=1.00 recall=1.00 hallucinated=0
+  FE04 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE05 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE06 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE07 (medium): F1=0.89 recall=0.80 hallucinated=0
+  FE08 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE09 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE10 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE11 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE12 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE13 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE14 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE15 (hard): F1=0.75 recall=0.60 hallucinated=0
+  FE16 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE17 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE18 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE19 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE20 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE21 (hard): F1=0.80 recall=1.00 hallucinated=1
+  FE22 (hard): F1=0.67 recall=1.00 hallucinated=1
+  FE23 (hard): F1=0.67 recall=0.50 hallucinated=0
+  FE24 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE25 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE26 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE27 (hard): F1=0.50 recall=0.50 hallucinated=1
+  FE28 (hard): F1=0.67 recall=1.00 hallucinated=1
+  FE29 (hard): F1=0.50 recall=1.00 hallucinated=2
+  FE30 (hard): F1=0.80 recall=0.67 hallucinated=0
+
+=== openai-cloud-nano (openai / gpt-5.4-nano) ===
+No Anthropic token found. Checked: MEM0_ANTHROPIC_TOKEN env var, /Users/jmaver/.claude/.credentials.json, ANTHROPIC_API_KEY env var. Anthropic LLM features will be disabled.
+  FE01 (easy): F1=1.00 recall=1.00 hallucinated=0
+  FE02 (easy): F1=1.00 recall=1.00 hallucinated=0
+  FE03 (easy): F1=1.00 recall=1.00 hallucinated=0
+  FE04 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE05 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE06 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE07 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE08 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE09 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE10 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE11 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE12 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE13 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE14 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE15 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE16 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE17 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE18 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE19 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE20 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE21 (hard): F1=0.80 recall=1.00 hallucinated=1
+  FE22 (hard): F1=0.67 recall=1.00 hallucinated=1
+  FE23 (hard): F1=0.67 recall=0.50 hallucinated=0
+  FE24 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE25 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE26 (hard): F1=0.91 recall=1.00 hallucinated=1
+  FE27 (hard): F1=0.80 recall=1.00 hallucinated=1
+  FE28 (hard): F1=0.50 recall=1.00 hallucinated=2
+  FE29 (hard): F1=0.50 recall=1.00 hallucinated=2
+  FE30 (hard): F1=0.80 recall=0.67 hallucinated=0
+
+=== lmstudio-qwen35-mlx (openai / qwen3.5-4b-mlx) ===
+No Anthropic token found. Checked: MEM0_ANTHROPIC_TOKEN env var, /Users/jmaver/.claude/.credentials.json, ANTHROPIC_API_KEY env var. Anthropic LLM features will be disabled.
+  FE01 (easy): F1=1.00 recall=1.00 hallucinated=0
+  FE02 (easy): F1=0.80 recall=0.67 hallucinated=0
+  FE03 (easy): F1=1.00 recall=1.00 hallucinated=0
+  FE04 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE05 (medium): F1=0.00 recall=0.00 hallucinated=0
+  FE06 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE07 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE08 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE09 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE10 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE11 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE12 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE13 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE14 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE15 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE16 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE17 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE18 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE19 (hard): F1=0.86 recall=0.75 hallucinated=0
+  FE20 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE21 (hard): F1=0.80 recall=1.00 hallucinated=1
+  FE22 (hard): F1=0.67 recall=1.00 hallucinated=1
+  FE23 (hard): F1=0.50 recall=0.50 hallucinated=1
+  FE24 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE25 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE26 (hard): F1=1.00 recall=1.00 hallucinated=0
+Error parsing extraction response: Expecting ',' delimiter: line 1 column 122 (char 121)
+  FE27 (hard): F1=0.00 recall=0.00 hallucinated=0
+  FE28 (hard): F1=0.67 recall=1.00 hallucinated=1
+  FE29 (hard): F1=0.50 recall=1.00 hallucinated=2
+Batch entity insert failed: timed out
+  FE30 (hard): F1=0.80 recall=0.67 hallucinated=0
+
+=== lmstudio-gemma (openai / mlx-community/gemma-4-26b-a4b-it) ===
+No Anthropic token found. Checked: MEM0_ANTHROPIC_TOKEN env var, /Users/jmaver/.claude/.credentials.json, ANTHROPIC_API_KEY env var. Anthropic LLM features will be disabled.
+  FE01 (easy): F1=1.00 recall=1.00 hallucinated=0
+  FE02 (easy): F1=0.50 recall=0.33 hallucinated=0
+  FE03 (easy): F1=1.00 recall=1.00 hallucinated=0
+  FE04 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE05 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE06 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE07 (medium): F1=0.89 recall=0.80 hallucinated=0
+  FE08 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE09 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE10 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE11 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE12 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE13 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE14 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE15 (hard): F1=0.75 recall=0.60 hallucinated=0
+  FE16 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE17 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE18 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE19 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE20 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE21 (hard): F1=0.80 recall=1.00 hallucinated=1
+  FE22 (hard): F1=0.67 recall=1.00 hallucinated=1
+  FE23 (hard): F1=0.50 recall=0.50 hallucinated=1
+  FE24 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE25 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE26 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE27 (hard): F1=0.67 recall=0.50 hallucinated=0
+  FE28 (hard): F1=0.67 recall=1.00 hallucinated=1
+  FE29 (hard): F1=0.50 recall=1.00 hallucinated=2
+  FE30 (hard): F1=0.80 recall=0.67 hallucinated=0
+
+=== ollama-qwen35-4b (ollama / qwen3.5:4b) ===
+No Anthropic token found. Checked: MEM0_ANTHROPIC_TOKEN env var, /Users/jmaver/.claude/.credentials.json, ANTHROPIC_API_KEY env var. Anthropic LLM features will be disabled.
+  FE01 (easy): F1=1.00 recall=1.00 hallucinated=0
+  FE02 (easy): F1=1.00 recall=1.00 hallucinated=0
+  FE03 (easy): F1=1.00 recall=1.00 hallucinated=0
+  FE04 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE05 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE06 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE07 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE08 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE09 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE10 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE11 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE12 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE13 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE14 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE15 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE16 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE17 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE18 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE19 (hard): F1=0.86 recall=0.75 hallucinated=0
+  FE20 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE21 (hard): F1=0.80 recall=1.00 hallucinated=1
+  FE22 (hard): F1=0.67 recall=1.00 hallucinated=1
+  FE23 (hard): F1=0.67 recall=0.50 hallucinated=0
+  FE24 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE25 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE26 (hard): F1=0.91 recall=1.00 hallucinated=1
+  FE27 (hard): F1=0.80 recall=1.00 hallucinated=1
+  FE28 (hard): F1=0.67 recall=1.00 hallucinated=1
+Empty or invalid JSON from Ollama, retrying once
+Retry also returned empty/invalid JSON — returning as-is
+  FE29 (hard): F1=0.00 recall=0.00 hallucinated=0
+  FE30 (hard): F1=0.80 recall=0.67 hallucinated=0
+
+=== ollama-qwen3-14b (ollama / qwen3:14b) ===
+No Anthropic token found. Checked: MEM0_ANTHROPIC_TOKEN env var, /Users/jmaver/.claude/.credentials.json, ANTHROPIC_API_KEY env var. Anthropic LLM features will be disabled.
+  FE01 (easy): F1=1.00 recall=1.00 hallucinated=0
+  FE02 (easy): F1=0.50 recall=0.33 hallucinated=0
+  FE03 (easy): F1=1.00 recall=1.00 hallucinated=0
+  FE04 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE05 (medium): F1=1.00 recall=1.00 hallucinated=0

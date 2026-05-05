@@ -7,8 +7,6 @@ mem0ai's architecture — if it breaks, our schema detection fails.
 
 from __future__ import annotations
 
-import pytest
-
 
 class TestSchemaDetectionInvariant:
     """Contract test: verify the system message presence invariant.
@@ -30,10 +28,7 @@ class TestSchemaDetectionInvariant:
         ]
 
         has_system = any(m.get("role") == "system" for m in fact_extraction_messages)
-        assert has_system, (
-            "INVARIANT BROKEN: Fact extraction messages must contain a system message. "
-            "If mem0ai changed this, our schema detection needs updating."
-        )
+        assert has_system, "INVARIANT BROKEN: Fact extraction messages must contain a system message. If mem0ai changed this, our schema detection needs updating."
 
     def test_memory_update_no_system_message(self):
         """Memory update messages should NOT have role=system."""
@@ -43,10 +38,7 @@ class TestSchemaDetectionInvariant:
         ]
 
         has_system = any(m.get("role") == "system" for m in memory_update_messages)
-        assert not has_system, (
-            "INVARIANT BROKEN: Memory update messages must NOT contain a system message. "
-            "If mem0ai changed this, our schema detection needs updating."
-        )
+        assert not has_system, "INVARIANT BROKEN: Memory update messages must NOT contain a system message. If mem0ai changed this, our schema detection needs updating."
 
 
 class TestSchemaDetectionWithRealPrompts:
@@ -79,13 +71,7 @@ class TestSchemaDetectionWithRealPrompts:
         messages = [
             {
                 "role": "user",
-                "content": (
-                    "Existing Memories:\n"
-                    "---\n"
-                    "ID: abc123\nMemory: Alice likes Python\n"
-                    "---\n"
-                    "New Memory: Alice now prefers TypeScript over Python\n"
-                ),
+                "content": ("Existing Memories:\n---\nID: abc123\nMemory: Alice likes Python\n---\nNew Memory: Alice now prefers TypeScript over Python\n"),
             },
         ]
 

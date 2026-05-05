@@ -31,10 +31,7 @@ class TestVectorStoreClientAccess:
         import inspect
 
         source = inspect.getsource(Qdrant.__init__)
-        assert "self.client" in source, (
-            "INVARIANT BROKEN: Qdrant.__init__ must assign self.client. "
-            "Our code accesses memory.vector_store.client directly."
-        )
+        assert "self.client" in source, "INVARIANT BROKEN: Qdrant.__init__ must assign self.client. Our code accesses memory.vector_store.client directly."
 
     def test_qdrant_class_has_collection_name(self):
         """The Qdrant vector store class exposes .collection_name."""
@@ -46,10 +43,7 @@ class TestVectorStoreClientAccess:
         import inspect
 
         source = inspect.getsource(Qdrant.__init__)
-        assert "self.collection_name" in source, (
-            "INVARIANT BROKEN: Qdrant.__init__ must assign self.collection_name. "
-            "Our code accesses memory.vector_store.collection_name."
-        )
+        assert "self.collection_name" in source, "INVARIANT BROKEN: Qdrant.__init__ must assign self.collection_name. Our code accesses memory.vector_store.collection_name."
 
 
 class TestMcpSdkImports:
@@ -75,9 +69,7 @@ class TestLlmFactoryRegistration:
         except ImportError:
             pytest.skip("mem0ai not installed")
 
-        assert hasattr(LlmFactory, "register_provider"), (
-            "INVARIANT BROKEN: LlmFactory must have register_provider classmethod."
-        )
+        assert hasattr(LlmFactory, "register_provider"), "INVARIANT BROKEN: LlmFactory must have register_provider classmethod."
 
     def test_register_provider_is_idempotent(self):
         """Calling register_provider twice with same name doesn't error."""
@@ -116,9 +108,7 @@ class TestLlmFactoryRegistration:
         # The factory uses a class-level dict, so it should persist
         provider_map = getattr(LlmFactory, "provider_to_class", None)
         if provider_map is not None:
-            assert "test_persist" in provider_map, (
-                "INVARIANT BROKEN: Registered provider must persist in LlmFactory."
-            )
+            assert "test_persist" in provider_map, "INVARIANT BROKEN: Registered provider must persist in LlmFactory."
 
 
 class TestOllamaLLMInterface:
@@ -131,10 +121,7 @@ class TestOllamaLLMInterface:
         except ImportError:
             pytest.skip("mem0ai not installed")
 
-        assert hasattr(OllamaLLM, "_parse_response"), (
-            "INVARIANT BROKEN: OllamaLLM must have _parse_response method. "
-            "Our OllamaToolLLM subclass overrides it."
-        )
+        assert hasattr(OllamaLLM, "_parse_response"), "INVARIANT BROKEN: OllamaLLM must have _parse_response method. Our OllamaToolLLM subclass overrides it."
 
     def test_ollama_llm_has_generate_response(self):
         """OllamaLLM has generate_response method we override."""
@@ -143,10 +130,7 @@ class TestOllamaLLMInterface:
         except ImportError:
             pytest.skip("mem0ai not installed")
 
-        assert hasattr(OllamaLLM, "generate_response"), (
-            "INVARIANT BROKEN: OllamaLLM must have generate_response method. "
-            "Our OllamaToolLLM subclass overrides it."
-        )
+        assert hasattr(OllamaLLM, "generate_response"), "INVARIANT BROKEN: OllamaLLM must have generate_response method. Our OllamaToolLLM subclass overrides it."
 
     def test_ollama_config_has_base_url(self):
         """OllamaConfig accepts ollama_base_url parameter."""
@@ -157,10 +141,7 @@ class TestOllamaLLMInterface:
 
         # Verify __init__ accepts ollama_base_url and stores it
         cfg = OllamaConfig(ollama_base_url="http://test:11434")
-        assert cfg.ollama_base_url == "http://test:11434", (
-            "INVARIANT BROKEN: OllamaConfig must accept and store ollama_base_url. "
-            "Our config.py passes this field to Ollama LLM config."
-        )
+        assert cfg.ollama_base_url == "http://test:11434", "INVARIANT BROKEN: OllamaConfig must accept and store ollama_base_url. Our config.py passes this field to Ollama LLM config."
 
     def test_ollama_llm_init_accepts_config(self):
         """OllamaLLM.__init__ accepts a 'config' parameter by name."""
@@ -173,7 +154,83 @@ class TestOllamaLLMInterface:
 
         sig = inspect.signature(OllamaLLM.__init__)
         params = list(sig.parameters.keys())
-        assert "config" in params, (
-            "INVARIANT BROKEN: OllamaLLM.__init__ must accept a 'config' parameter. "
-            f"Our OllamaToolLLM inherits __init__ from it. Found params: {params}"
+        assert "config" in params, f"INVARIANT BROKEN: OllamaLLM.__init__ must accept a 'config' parameter. Our OllamaToolLLM inherits __init__ from it. Found params: {params}"
+
+
+class TestV3SearchGetAllContract:
+    """Lock in v3 API contracts for Memory.search and Memory.get_all.
+
+    If a future mem0ai release changes these signatures, search_with_project
+    and get_memories tools will silently break.
+    """
+
+    def test_memory_search_accepts_filters_kwarg(self):
+        """v3 contract: Memory.search accepts 'filters' dict kwarg."""
+        try:
+            from mem0 import Memory
+        except ImportError:
+            pytest.skip("mem0ai not installed")
+
+        import inspect
+
+        sig = inspect.signature(Memory.search)
+        params = sig.parameters
+        assert "filters" in params, "INVARIANT BROKEN: Memory.search must accept 'filters' kwarg in v3. Our search_with_project passes filters={'user_id': ...}."
+
+    def test_memory_search_no_top_level_user_id(self):
+        """v3 contract: Memory.search must NOT accept top-level 'user_id' kwarg.
+
+        In v3, user_id goes inside filters={}. If this fails, it means mem0
+        added back the deprecated form — callers should still use filters={}.
+        """
+        try:
+            from mem0 import Memory
+        except ImportError:
+            pytest.skip("mem0ai not installed")
+
+        import inspect
+
+        sig = inspect.signature(Memory.search)
+        params = sig.parameters
+        assert "user_id" not in params, (
+            "INVARIANT CHANGED: Memory.search accepted top-level 'user_id' in v3. If mem0 re-added this, verify our filters={} approach still works and update this contract test accordingly."
         )
+
+    def test_memory_search_accepts_top_k_kwarg(self):
+        """v3 contract: Memory.search accepts 'top_k' kwarg (not 'limit')."""
+        try:
+            from mem0 import Memory
+        except ImportError:
+            pytest.skip("mem0ai not installed")
+
+        import inspect
+
+        sig = inspect.signature(Memory.search)
+        params = sig.parameters
+        assert "top_k" in params, "INVARIANT BROKEN: Memory.search must accept 'top_k' kwarg in v3. Our search_with_project forwards limit= as top_k=."
+
+    def test_memory_get_all_accepts_filters_kwarg(self):
+        """v3 contract: Memory.get_all accepts 'filters' dict kwarg."""
+        try:
+            from mem0 import Memory
+        except ImportError:
+            pytest.skip("mem0ai not installed")
+
+        import inspect
+
+        sig = inspect.signature(Memory.get_all)
+        params = sig.parameters
+        assert "filters" in params, "INVARIANT BROKEN: Memory.get_all must accept 'filters' kwarg in v3. Our get_memories tool passes filters={'user_id': ...}."
+
+    def test_memory_get_all_accepts_top_k_kwarg(self):
+        """v3 contract: Memory.get_all accepts 'top_k' kwarg (not 'limit')."""
+        try:
+            from mem0 import Memory
+        except ImportError:
+            pytest.skip("mem0ai not installed")
+
+        import inspect
+
+        sig = inspect.signature(Memory.get_all)
+        params = sig.parameters
+        assert "top_k" in params, "INVARIANT BROKEN: Memory.get_all must accept 'top_k' kwarg in v3. Our get_memories tool passes top_k= when limit is provided."

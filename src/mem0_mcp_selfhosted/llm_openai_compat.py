@@ -71,6 +71,25 @@ def _sanitize_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
     return sanitized
 
 
+# gpt-5.x cloud models reject ``max_tokens`` (require ``max_completion_tokens``).
+# mem0's base class only filters this for o1/o3 reasoning models, not gpt-5.x.
+# "gpt-5" overlaps mem0's reasoning-model set; mem0 short-circuits us there,
+# leaving this override active only for non-reasoning gpt-5.x variants.
+_GPT5_REJECTS_MAX_TOKENS_PREFIXES = ("gpt-5", "chatgpt-5")
+
+
+def _model_rejects_max_tokens(model: Any) -> bool:
+    """Return True if the OpenAI cloud model rejects the ``max_tokens`` param.
+
+    BaseLlmConfig types ``model`` loosely (str | None | dict); only str
+    values have a meaningful prefix.
+    """
+    if not isinstance(model, str):
+        return False
+    base = model.lower().rsplit("/", 1)[-1]
+    return base.startswith(_GPT5_REJECTS_MAX_TOKENS_PREFIXES)
+
+
 class OpenAICompatLLM(OpenAILLM):
     """Drop-in replacement for OpenAILLM that strips json_object response_format
     and cleans up response artifacts from local model servers.
@@ -78,6 +97,21 @@ class OpenAICompatLLM(OpenAILLM):
     Registered as the "openai" provider so it transparently replaces the
     built-in when MEM0_LLM_PROVIDER=openai is used with a local server.
     """
+
+    def _get_common_params(self, **kwargs: Any) -> dict[str, Any]:
+        """Translate ``max_tokens`` → ``max_completion_tokens`` for gpt-5.x.
+
+        gpt-5.x / chatgpt-5.x reject ``max_tokens`` and require the
+        ``max_completion_tokens`` spelling. Translate rather than drop so
+        ``MEM0_LLM_MAX_TOKENS`` stays effective and long extractions don't
+        silently truncate at the server default.
+        """
+        params = super()._get_common_params(**kwargs)
+        if _model_rejects_max_tokens(getattr(self.config, "model", None)):
+            max_tokens = params.pop("max_tokens", None)
+            if max_tokens is not None:
+                params["max_completion_tokens"] = max_tokens
+        return params
 
     def generate_response(
         self,
@@ -88,10 +122,7 @@ class OpenAICompatLLM(OpenAILLM):
         **kwargs: Any,
     ):
         if isinstance(response_format, dict) and response_format.get("type") == "json_object":
-            logger.debug(
-                "OpenAICompatLLM: replacing unsupported response_format={'type': 'json_object'} "
-                "with {'type': 'text'} for local server compatibility"
-            )
+            logger.debug("OpenAICompatLLM: replacing unsupported response_format={'type': 'json_object'} with {'type': 'text'} for local server compatibility")
             response_format = {"type": "text"}
 
         messages = _sanitize_messages(messages)

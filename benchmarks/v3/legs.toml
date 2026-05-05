@@ -1,0 +1,71 @@
+# Named provider battle legs for benchmarks/v3/provider_battle.py.
+#
+# Each leg maps a friendly name -> {provider, model, optional URL/auth}.
+# Values starting with "$" are env-var references resolved at run time so
+# secrets stay in .env.local rather than this file.
+#
+# Run a single leg:    python -m benchmarks.v3.provider_battle --leg <name>
+# Run multiple:        python -m benchmarks.v3.provider_battle --leg leg1,leg2
+# Run all defined:     python -m benchmarks.v3.provider_battle --leg all
+#
+# Throttle rate-limited legs:    --sleep 5 (seconds between cases)
+
+[legs.lmstudio-qwen35-mlx]
+provider = "openai"
+model = "qwen3.5-4b-mlx"
+llm_url = "http://192.168.200.84:1234/v1"
+description = "LM Studio MLX 4-bit Qwen3.5-4B (kraken)"
+
+[legs.lmstudio-gemma]
+provider = "openai"
+model = "mlx-community/gemma-4-26b-a4b-it"
+llm_url = "http://192.168.200.84:1234/v1"
+description = "LM Studio MLX Gemma-4 26B-A4B-IT (kraken)"
+
+[legs.openai-cloud-nano]
+provider = "openai"
+model_env = "MEM0_CHATGPT_MODEL"
+llm_url = "https://api.openai.com/v1"
+llm_api_key_env = "MEM0_CHATGPT_AUTH_TOKEN"
+description = "OpenAI cloud chatgpt-5.4-nano"
+
+[legs.ollama-qwen35-4b]
+provider = "ollama"
+model = "qwen3.5:4b"
+llm_url = "http://localhost:11434"
+description = "Local Ollama Qwen3.5-4B GGUF Q4_K_M"
+
+[legs.ollama-qwen3-14b]
+provider = "ollama"
+model = "qwen3:14b"
+llm_url = "http://localhost:11434"
+description = "Local Ollama Qwen3-14B GGUF (v3 default)"
+
+# anthropic-oat is for testing the OAT auth refresh flow only — not for routine benchmarks.
+# Claude Pro/Max subscription tiers lack sufficient budget for mem0's 6-10 LLM calls per add().
+# Use anthropic-api instead for any fact-extraction runs at scale.
+[legs.anthropic-oat]
+provider = "anthropic"
+model = "claude-opus-4-6"
+anthropic_token_env = "MEM0_ANTHROPIC_OAUTH_TOKEN"
+description = "Claude Opus 4.6 via Claude Code OAuth token (subscription-tier; rate-limited)"
+
+[legs.anthropic-api]
+provider = "anthropic"
+model = "claude-sonnet-4-6"
+anthropic_token_env = "MEM0_ANTHROPIC_API_TOKEN"
+description = "Claude Sonnet 4.6 via real Anthropic API key (paid tier; recommended for benchmarks)"
+
+[legs.anthropic-qwen36]
+provider = "anthropic"
+model_env = "MEM0_QWEN_ANTHROPIC_MODEL"
+llm_url_env = "MEM0_QWEN_ANTHROPIC_BASE_URL"
+anthropic_token_env = "MEM0_QWEN_ANTHROPIC_AUTH_TOKEN"
+description = "Qwen3.6 via Anthropic-compatible third-party endpoint"
+
+[legs.anthropic-glm]
+provider = "anthropic"
+model_env = "MEM0_GLM_ANTHROPIC_MODEL"
+llm_url_env = "MEM0_GLM_ANTHROPIC_BASE_URL"
+anthropic_token_env = "MEM0_GLM_ANTHROPIC_AUTH_TOKEN"
+description = "GLM via Anthropic-compatible third-party endpoint"

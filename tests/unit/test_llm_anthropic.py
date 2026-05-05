@@ -68,37 +68,39 @@ class TestParseResponse:
         return response
 
     def test_single_tool_use(self):
-        response = self._make_response([
-            self._make_tool_use_block("extract_entities", {"entities": ["Alice"]})
-        ])
+        response = self._make_response([self._make_tool_use_block("extract_entities", {"entities": ["Alice"]})])
         result = AnthropicOATLLM._parse_response(response)
-        assert result["tool_calls"] == [
-            {"name": "extract_entities", "arguments": {"entities": ["Alice"]}}
-        ]
+        assert result["tool_calls"] == [{"name": "extract_entities", "arguments": {"entities": ["Alice"]}}]
         assert result["content"] == ""
 
     def test_mixed_text_and_tool(self):
-        response = self._make_response([
-            self._make_text_block("Analyzing..."),
-            self._make_tool_use_block("extract_entities", {"entities": ["Alice"]}),
-        ])
+        response = self._make_response(
+            [
+                self._make_text_block("Analyzing..."),
+                self._make_tool_use_block("extract_entities", {"entities": ["Alice"]}),
+            ]
+        )
         result = AnthropicOATLLM._parse_response(response)
         assert result["content"] == "Analyzing..."
         assert len(result["tool_calls"]) == 1
 
     def test_text_only_when_tools_provided(self):
-        response = self._make_response([
-            self._make_text_block("No entities found."),
-        ])
+        response = self._make_response(
+            [
+                self._make_text_block("No entities found."),
+            ]
+        )
         result = AnthropicOATLLM._parse_response(response)
         assert result["content"] == "No entities found."
         assert result["tool_calls"] == []
 
     def test_multiple_tool_use_blocks(self):
-        response = self._make_response([
-            self._make_tool_use_block("tool_a", {"a": 1}),
-            self._make_tool_use_block("tool_b", {"b": 2}),
-        ])
+        response = self._make_response(
+            [
+                self._make_tool_use_block("tool_a", {"a": 1}),
+                self._make_tool_use_block("tool_b", {"b": 2}),
+            ]
+        )
         result = AnthropicOATLLM._parse_response(response)
         assert len(result["tool_calls"]) == 2
 
@@ -138,9 +140,7 @@ def _make_auth_error():
     mock_response.headers = httpx.Headers({})
     mock_response.is_closed = True
     mock_response.is_stream_consumed = True
-    return anthropic.AuthenticationError(
-        message="authentication_error", response=mock_response, body=None
-    )
+    return anthropic.AuthenticationError(message="authentication_error", response=mock_response, body=None)
 
 
 def _make_rate_limit_error():
@@ -150,9 +150,7 @@ def _make_rate_limit_error():
     mock_response.headers = httpx.Headers({"retry-after": "1"})
     mock_response.is_closed = True
     mock_response.is_stream_consumed = True
-    return anthropic.RateLimitError(
-        message="rate_limit_error", response=mock_response, body=None
-    )
+    return anthropic.RateLimitError(message="rate_limit_error", response=mock_response, body=None)
 
 
 def _make_api_response(text="ok", stop_reason="end_turn"):
@@ -190,13 +188,9 @@ class TestCallApiTokenRefresh:
         llm = _make_llm(OAT_TOKEN)
         success_response = _make_api_response("retried ok")
 
-        llm.client.messages.create = MagicMock(
-            side_effect=[_make_auth_error(), success_response]
-        )
+        llm.client.messages.create = MagicMock(side_effect=[_make_auth_error(), success_response])
 
-        with patch(
-            "mem0_mcp_selfhosted.llm_anthropic.resolve_token", return_value=OAT_TOKEN_NEW
-        ):
+        with patch("mem0_mcp_selfhosted.llm_anthropic.resolve_token", return_value=OAT_TOKEN_NEW):
             with patch("mem0_mcp_selfhosted.llm_anthropic.read_credentials_full", return_value=None):
                 with patch.object(llm, "_build_client") as mock_build:
                     result = llm._call_api({"model": "test"})
@@ -209,9 +203,7 @@ class TestCallApiTokenRefresh:
         llm = _make_llm(OAT_TOKEN)
         llm.client.messages.create = MagicMock(side_effect=_make_auth_error())
 
-        with patch(
-            "mem0_mcp_selfhosted.llm_anthropic.resolve_token", return_value=OAT_TOKEN
-        ):
+        with patch("mem0_mcp_selfhosted.llm_anthropic.resolve_token", return_value=OAT_TOKEN):
             with patch("mem0_mcp_selfhosted.llm_anthropic.time.sleep"):
                 with pytest.raises(anthropic.AuthenticationError):
                     llm._call_api({"model": "test"})
@@ -224,9 +216,7 @@ class TestCallApiTokenRefresh:
         llm = _make_llm(OAT_TOKEN)
         llm.client.messages.create = MagicMock(side_effect=_make_auth_error())
 
-        with patch(
-            "mem0_mcp_selfhosted.llm_anthropic.resolve_token", return_value=None
-        ):
+        with patch("mem0_mcp_selfhosted.llm_anthropic.resolve_token", return_value=None):
             with patch("mem0_mcp_selfhosted.llm_anthropic.time.sleep"):
                 with pytest.raises(anthropic.AuthenticationError):
                     llm._call_api({"model": "test"})
@@ -238,9 +228,7 @@ class TestCallApiTokenRefresh:
         llm = _make_llm(API_KEY)
         llm.client.messages.create = MagicMock(side_effect=_make_auth_error())
 
-        with patch(
-            "mem0_mcp_selfhosted.llm_anthropic.resolve_token"
-        ) as mock_resolve:
+        with patch("mem0_mcp_selfhosted.llm_anthropic.resolve_token") as mock_resolve:
             with pytest.raises(anthropic.AuthenticationError):
                 llm._call_api({"model": "test"})
 
@@ -253,9 +241,7 @@ class TestCallApiTokenRefresh:
         llm = _make_llm(OAT_TOKEN)
         llm.client.messages.create = MagicMock(side_effect=_make_rate_limit_error())
 
-        with patch(
-            "mem0_mcp_selfhosted.llm_anthropic.resolve_token"
-        ) as mock_resolve:
+        with patch("mem0_mcp_selfhosted.llm_anthropic.resolve_token") as mock_resolve:
             with pytest.raises(anthropic.RateLimitError):
                 llm._call_api({"model": "test"})
 
@@ -264,13 +250,9 @@ class TestCallApiTokenRefresh:
     def test_no_infinite_retry_loops(self):
         """Only one retry — if retry also fails with AuthError, it propagates."""
         llm = _make_llm(OAT_TOKEN)
-        llm.client.messages.create = MagicMock(
-            side_effect=[_make_auth_error(), _make_auth_error()]
-        )
+        llm.client.messages.create = MagicMock(side_effect=[_make_auth_error(), _make_auth_error()])
 
-        with patch(
-            "mem0_mcp_selfhosted.llm_anthropic.resolve_token", return_value=OAT_TOKEN_NEW
-        ):
+        with patch("mem0_mcp_selfhosted.llm_anthropic.resolve_token", return_value=OAT_TOKEN_NEW):
             with patch("mem0_mcp_selfhosted.llm_anthropic.read_credentials_full", return_value=None):
                 with patch.object(llm, "_build_client"):
                     with pytest.raises(anthropic.AuthenticationError):
@@ -325,9 +307,7 @@ def _make_internal_server_error(status_code=500):
     mock_response.headers = httpx.Headers({})
     mock_response.is_closed = True
     mock_response.is_stream_consumed = True
-    return anthropic.InternalServerError(
-        message="internal_server_error", response=mock_response, body=None
-    )
+    return anthropic.InternalServerError(message="internal_server_error", response=mock_response, body=None)
 
 
 def _make_api_status_error(status_code):
@@ -337,9 +317,7 @@ def _make_api_status_error(status_code):
     mock_response.headers = httpx.Headers({})
     mock_response.is_closed = True
     mock_response.is_stream_consumed = True
-    return anthropic.APIStatusError(
-        message=f"error_{status_code}", response=mock_response, body=None
-    )
+    return anthropic.APIStatusError(message=f"error_{status_code}", response=mock_response, body=None)
 
 
 class TestTransientRetry:
@@ -349,9 +327,7 @@ class TestTransientRetry:
         """Transient 500 on first attempt, succeeds on retry."""
         llm = _make_llm(API_KEY)
         success = _make_api_response("ok")
-        llm.client.messages.create = MagicMock(
-            side_effect=[_make_internal_server_error(500), success]
-        )
+        llm.client.messages.create = MagicMock(side_effect=[_make_internal_server_error(500), success])
 
         with patch("mem0_mcp_selfhosted.llm_anthropic.time.sleep") as mock_sleep:
             result = llm._call_api({"model": "test"})
@@ -364,9 +340,7 @@ class TestTransientRetry:
         """Transient 502 on first attempt, succeeds on retry."""
         llm = _make_llm(API_KEY)
         success = _make_api_response("ok")
-        llm.client.messages.create = MagicMock(
-            side_effect=[_make_api_status_error(502), success]
-        )
+        llm.client.messages.create = MagicMock(side_effect=[_make_api_status_error(502), success])
 
         with patch("mem0_mcp_selfhosted.llm_anthropic.time.sleep"):
             result = llm._call_api({"model": "test"})
@@ -378,9 +352,7 @@ class TestTransientRetry:
         """Transient 529 (overloaded) on first attempt, succeeds on retry."""
         llm = _make_llm(API_KEY)
         success = _make_api_response("ok")
-        llm.client.messages.create = MagicMock(
-            side_effect=[_make_api_status_error(529), success]
-        )
+        llm.client.messages.create = MagicMock(side_effect=[_make_api_status_error(529), success])
 
         with patch("mem0_mcp_selfhosted.llm_anthropic.time.sleep"):
             result = llm._call_api({"model": "test"})
@@ -427,9 +399,7 @@ class TestTransientRetry:
     def test_no_retry_on_400(self):
         """Non-retryable 400 raises immediately without retry."""
         llm = _make_llm(API_KEY)
-        llm.client.messages.create = MagicMock(
-            side_effect=_make_api_status_error(400)
-        )
+        llm.client.messages.create = MagicMock(side_effect=_make_api_status_error(400))
 
         with patch("mem0_mcp_selfhosted.llm_anthropic.time.sleep") as mock_sleep:
             with pytest.raises(anthropic.APIStatusError):
@@ -441,9 +411,7 @@ class TestTransientRetry:
     def test_no_retry_on_404(self):
         """Non-retryable 404 raises immediately without retry."""
         llm = _make_llm(API_KEY)
-        llm.client.messages.create = MagicMock(
-            side_effect=_make_api_status_error(404)
-        )
+        llm.client.messages.create = MagicMock(side_effect=_make_api_status_error(404))
 
         with patch("mem0_mcp_selfhosted.llm_anthropic.time.sleep") as mock_sleep:
             with pytest.raises(anthropic.APIStatusError):
@@ -459,6 +427,7 @@ class TestTransientRetry:
 
         # First call: 401 (auth error) → refresh → second call: 500 → retry → success
         call_count = {"n": 0}
+
         def _side_effect(**kwargs):
             call_count["n"] += 1
             if call_count["n"] == 1:
@@ -469,9 +438,7 @@ class TestTransientRetry:
 
         llm.client.messages.create = MagicMock(side_effect=_side_effect)
 
-        with patch(
-            "mem0_mcp_selfhosted.llm_anthropic.resolve_token", return_value=OAT_TOKEN_NEW
-        ):
+        with patch("mem0_mcp_selfhosted.llm_anthropic.resolve_token", return_value=OAT_TOKEN_NEW):
             with patch("mem0_mcp_selfhosted.llm_anthropic.read_credentials_full", return_value=None):
                 with patch.object(llm, "_build_client"):
                     with patch("mem0_mcp_selfhosted.llm_anthropic.time.sleep"):
@@ -494,13 +461,9 @@ class TestThreeStepAuthRetry:
         """Step 1: credentials file has new token → piggyback success."""
         llm = _make_llm(OAT_TOKEN)
         success = _make_api_response("ok")
-        llm.client.messages.create = MagicMock(
-            side_effect=[_make_auth_error(), success]
-        )
+        llm.client.messages.create = MagicMock(side_effect=[_make_auth_error(), success])
 
-        with patch(
-            "mem0_mcp_selfhosted.llm_anthropic.resolve_token", return_value=OAT_TOKEN_NEW
-        ):
+        with patch("mem0_mcp_selfhosted.llm_anthropic.resolve_token", return_value=OAT_TOKEN_NEW):
             with patch("mem0_mcp_selfhosted.llm_anthropic.read_credentials_full", return_value=None):
                 with patch.object(llm, "_build_client") as mock_build:
                     result = llm._call_api({"model": "test"})
@@ -513,9 +476,7 @@ class TestThreeStepAuthRetry:
         llm = _make_llm(OAT_TOKEN)
         llm._refresh_token = REFRESH_TOKEN
         success = _make_api_response("ok")
-        llm.client.messages.create = MagicMock(
-            side_effect=[_make_auth_error(), success]
-        )
+        llm.client.messages.create = MagicMock(side_effect=[_make_auth_error(), success])
 
         oauth_result = {
             "access_token": OAT_TOKEN_NEW,
@@ -523,12 +484,8 @@ class TestThreeStepAuthRetry:
             "expires_in": 28800,
         }
 
-        with patch(
-            "mem0_mcp_selfhosted.llm_anthropic.resolve_token", return_value=OAT_TOKEN
-        ):
-            with patch(
-                "mem0_mcp_selfhosted.llm_anthropic.refresh_oat_token", return_value=oauth_result
-            ):
+        with patch("mem0_mcp_selfhosted.llm_anthropic.resolve_token", return_value=OAT_TOKEN):
+            with patch("mem0_mcp_selfhosted.llm_anthropic.refresh_oat_token", return_value=oauth_result):
                 with patch.object(llm, "_build_client") as mock_build:
                     result = llm._call_api({"model": "test"})
 
@@ -542,12 +499,11 @@ class TestThreeStepAuthRetry:
         """Step 3: piggyback + self-refresh fail, wait-and-retry finds new token."""
         llm = _make_llm(OAT_TOKEN)
         success = _make_api_response("ok")
-        llm.client.messages.create = MagicMock(
-            side_effect=[_make_auth_error(), success]
-        )
+        llm.client.messages.create = MagicMock(side_effect=[_make_auth_error(), success])
 
         # resolve_token returns same token first (Step 1), then new token (Step 3)
         resolve_calls = {"n": 0}
+
         def _resolve_side_effect():
             resolve_calls["n"] += 1
             if resolve_calls["n"] <= 1:
@@ -572,9 +528,7 @@ class TestThreeStepAuthRetry:
         llm = _make_llm(OAT_TOKEN)
         llm.client.messages.create = MagicMock(side_effect=_make_auth_error())
 
-        with patch(
-            "mem0_mcp_selfhosted.llm_anthropic.resolve_token", return_value=OAT_TOKEN
-        ):
+        with patch("mem0_mcp_selfhosted.llm_anthropic.resolve_token", return_value=OAT_TOKEN):
             with patch("mem0_mcp_selfhosted.llm_anthropic.time.sleep"):
                 with pytest.raises(anthropic.AuthenticationError):
                     llm._call_api({"model": "test"})
@@ -586,12 +540,8 @@ class TestThreeStepAuthRetry:
         llm = _make_llm(API_KEY)
         llm.client.messages.create = MagicMock(side_effect=_make_auth_error())
 
-        with patch(
-            "mem0_mcp_selfhosted.llm_anthropic.resolve_token"
-        ) as mock_resolve:
-            with patch(
-                "mem0_mcp_selfhosted.llm_anthropic.refresh_oat_token"
-            ) as mock_refresh:
+        with patch("mem0_mcp_selfhosted.llm_anthropic.resolve_token") as mock_resolve:
+            with patch("mem0_mcp_selfhosted.llm_anthropic.refresh_oat_token") as mock_refresh:
                 with pytest.raises(anthropic.AuthenticationError):
                     llm._call_api({"model": "test"})
 
@@ -617,12 +567,8 @@ class TestProactiveRefresh:
             "expires_in": 28800,
         }
 
-        with patch(
-            "mem0_mcp_selfhosted.llm_anthropic.resolve_token", return_value=OAT_TOKEN
-        ):
-            with patch(
-                "mem0_mcp_selfhosted.llm_anthropic.refresh_oat_token", return_value=oauth_result
-            ):
+        with patch("mem0_mcp_selfhosted.llm_anthropic.resolve_token", return_value=OAT_TOKEN):
+            with patch("mem0_mcp_selfhosted.llm_anthropic.refresh_oat_token", return_value=oauth_result):
                 with patch.object(llm, "_build_client") as mock_build:
                     result = llm._call_api({"model": "test"})
 
@@ -639,9 +585,7 @@ class TestProactiveRefresh:
         success = _make_api_response("ok")
         llm.client.messages.create = MagicMock(return_value=success)
 
-        with patch(
-            "mem0_mcp_selfhosted.llm_anthropic.refresh_oat_token"
-        ) as mock_refresh:
+        with patch("mem0_mcp_selfhosted.llm_anthropic.refresh_oat_token") as mock_refresh:
             result = llm._call_api({"model": "test"})
 
         mock_refresh.assert_not_called()
@@ -653,9 +597,7 @@ class TestProactiveRefresh:
         success = _make_api_response("ok")
         llm.client.messages.create = MagicMock(return_value=success)
 
-        with patch(
-            "mem0_mcp_selfhosted.llm_anthropic.is_token_expiring_soon"
-        ) as mock_expiry:
+        with patch("mem0_mcp_selfhosted.llm_anthropic.is_token_expiring_soon") as mock_expiry:
             result = llm._call_api({"model": "test"})
 
         mock_expiry.assert_not_called()
@@ -668,9 +610,7 @@ class TestProactiveRefresh:
         success = _make_api_response("ok")
         llm.client.messages.create = MagicMock(return_value=success)
 
-        with patch(
-            "mem0_mcp_selfhosted.llm_anthropic.is_oat_token"
-        ) as mock_is_oat:
+        with patch("mem0_mcp_selfhosted.llm_anthropic.is_oat_token") as mock_is_oat:
             result = llm._call_api({"model": "test"})
 
         mock_is_oat.assert_not_called()
@@ -683,12 +623,8 @@ class TestProactiveRefresh:
         success = _make_api_response("ok")
         llm.client.messages.create = MagicMock(return_value=success)
 
-        with patch(
-            "mem0_mcp_selfhosted.llm_anthropic.is_oat_token", return_value=True
-        ) as mock_is_oat:
-            with patch(
-                "mem0_mcp_selfhosted.llm_anthropic.is_token_expiring_soon", return_value=False
-            ):
+        with patch("mem0_mcp_selfhosted.llm_anthropic.is_oat_token", return_value=True) as mock_is_oat:
+            with patch("mem0_mcp_selfhosted.llm_anthropic.is_token_expiring_soon", return_value=False):
                 llm._call_api({"model": "test"})
 
         mock_is_oat.assert_called_once_with(OAT_TOKEN)
@@ -706,7 +642,7 @@ class TestGenerateResponseEmptyContent:
 
         result = llm.generate_response(
             messages=[{"role": "user", "content": "test"}],
-            response_format="json",
+            response_format={"type": "json_object"},
         )
 
         assert result == ""
@@ -735,3 +671,30 @@ class TestGenerateResponseEmptyContent:
         )
 
         assert result == "hello world"
+
+    def test_thinking_block_first_then_text_block(self):
+        """Models that emit a thinking block before the text block (extended
+        thinking on Anthropic; always-on for some third-party Anthropic-shaped
+        endpoints like qwen3.6 via DashScope) must have their *text* block
+        returned, not the thinking block.
+
+        Regression: ``_extract_text_block`` previously read ``content[0].text``
+        unconditionally; on a ``ThinkingBlock`` (which has ``.thinking`` but no
+        ``.text``) that yielded ``None`` and silently dropped the response.
+        """
+        llm = _make_llm(API_KEY)
+        thinking = MagicMock(spec=["type", "thinking"])
+        thinking.type = "thinking"
+        thinking.thinking = "let me think..."
+        text_block = MagicMock(spec=["type", "text"])
+        text_block.type = "text"
+        text_block.text = "the actual answer"
+        response = MagicMock()
+        response.content = [thinking, text_block]
+        llm.client.messages.create = MagicMock(return_value=response)
+
+        result = llm.generate_response(
+            messages=[{"role": "user", "content": "test"}],
+        )
+
+        assert result == "the actual answer"

@@ -3,18 +3,14 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
-import pytest
 
 from mem0_mcp_selfhosted.auth import (
-    _CREDENTIALS_PATH,
     _OAUTH_CLIENT_ID,
-    _OAUTH_TOKEN_URL,
     is_oat_token,
     is_token_expiring_soon,
     read_credentials_full,

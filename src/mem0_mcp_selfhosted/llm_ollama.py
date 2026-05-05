@@ -8,7 +8,7 @@ incompatibility — Ollama issues #10538, #10929, #10976).
 Defense layers (applied in order):
   1. /no_think injection — suppresses qwen3 thinking tokens before API call
   2. temperature=0, repeat_penalty=1.0 — deterministic structured output
-  3. keep_alive — prevents model unload between sequential graph pipeline calls
+  3. keep_alive — prevents model unload between sequential extraction calls
   4. Think-tag stripping — removes leaked <think> blocks from response content
   5. extract_json() — strips code fences / text prefixes from JSON responses
   6. Single retry — retries once on empty or invalid JSON
@@ -55,7 +55,7 @@ def extract_json(text: str) -> str:
         arr_idx = text.find("[")
         candidates = [i for i in (obj_idx, arr_idx) if i >= 0]
         if candidates:
-            return text[min(candidates):]
+            return text[min(candidates) :]
 
     return text
 
@@ -104,15 +104,19 @@ class OllamaToolLLM(OllamaLLM):
             if tool_calls_data:
                 for tc in tool_calls_data:
                     if isinstance(tc, dict):
-                        processed_response["tool_calls"].append({
-                            "name": tc["function"]["name"],
-                            "arguments": tc["function"]["arguments"],
-                        })
+                        processed_response["tool_calls"].append(
+                            {
+                                "name": tc["function"]["name"],
+                                "arguments": tc["function"]["arguments"],
+                            }
+                        )
                     else:
-                        processed_response["tool_calls"].append({
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        })
+                        processed_response["tool_calls"].append(
+                            {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments,
+                            }
+                        )
 
             return processed_response
         else:
@@ -151,14 +155,14 @@ class OllamaToolLLM(OllamaLLM):
         # Copy messages to avoid mutating the caller's list
         messages = [dict(m) for m in messages]
 
-        is_json = bool(
-            response_format and response_format.get("type") == "json_object"
-        )
+        is_json = bool(response_format and response_format.get("type") == "json_object")
         has_tools = bool(tools)
 
         # Layer 1: /no_think injection
         think_enabled = env("MEM0_OLLAMA_THINK").lower() in (
-            "true", "1", "yes",
+            "true",
+            "1",
+            "yes",
         )
         if not think_enabled:
             # Find last user message and inject /no_think
@@ -219,8 +223,6 @@ class OllamaToolLLM(OllamaLLM):
                 if isinstance(result, str):
                     result = extract_json(result)
                 if isinstance(result, str) and not self._is_json_valid(result):
-                    logger.error(
-                        "Retry also returned empty/invalid JSON — returning as-is"
-                    )
+                    logger.error("Retry also returned empty/invalid JSON — returning as-is")
 
         return result

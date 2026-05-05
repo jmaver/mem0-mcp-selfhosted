@@ -1,0 +1,110 @@
+# bench resume after reboot — 2026-05-05
+
+==========================================================
+  provider_battle ollama-qwen3-14b (resume)
+==========================================================
+Running 30 cases × 1 legs (sleep=1.0s) …
+
+=== ollama-qwen3-14b (ollama / qwen3:14b) ===
+No Anthropic token found. Checked: MEM0_ANTHROPIC_TOKEN env var, /Users/jmaver/.claude/.credentials.json, ANTHROPIC_API_KEY env var. Anthropic LLM features will be disabled.
+Fetching 18 files:   0%|          | 0/18 [00:00<?, ?it/s]Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Fetching 18 files:  11%|█         | 2/18 [00:00<00:00, 19.06it/s]Fetching 18 files: 100%|██████████| 18/18 [00:00<00:00, 90.51it/s]Fetching 18 files: 100%|██████████| 18/18 [00:00<00:00, 80.39it/s]
+  FE01 (easy): F1=1.00 recall=1.00 hallucinated=0
+  FE02 (easy): F1=0.50 recall=0.33 hallucinated=0
+  FE03 (easy): F1=1.00 recall=1.00 hallucinated=0
+  FE04 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE05 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE06 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE07 (medium): F1=0.89 recall=0.80 hallucinated=0
+  FE08 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE09 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE10 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE11 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE12 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE13 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE14 (medium): F1=1.00 recall=1.00 hallucinated=0
+  FE15 (hard): F1=0.75 recall=0.60 hallucinated=0
+  FE16 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE17 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE18 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE19 (hard): F1=0.86 recall=0.75 hallucinated=0
+  FE20 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE21 (hard): F1=0.80 recall=1.00 hallucinated=1
+  FE22 (hard): F1=0.67 recall=1.00 hallucinated=1
+  FE23 (hard): F1=0.67 recall=0.50 hallucinated=0
+  FE24 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE25 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE26 (hard): F1=1.00 recall=1.00 hallucinated=0
+  FE27 (hard): F1=0.67 recall=0.50 hallucinated=0
+  FE28 (hard): F1=0.67 recall=1.00 hallucinated=1
+  FE29 (hard): F1=0.50 recall=1.00 hallucinated=2
+  FE30 (hard): F1=0.80 recall=0.67 hallucinated=0
+
+leg              | provider | model     | mean_f1 | ci95_f1     | mean_recall | hallucinations | add_p50 | add_p95 | add_mean | fail/n
+-----------------+----------+-----------+---------+-------------+-------------+----------------+---------+---------+----------+-------
+ollama-qwen3-14b | ollama   | qwen3:14b | 0.892   | (0.83,0.95) | 0.905       | 5              | 20.27s  | 45.61s  | 23.33s   | 0/30  
+
+==========================================================
+  hook_and_scoping
+==========================================================
+
+Running 5 iterations of each hook (cold-start each call) …
+  iter  1/5: context=13.42s ok=True
+            session_end=29.29s ok=True
+  iter  2/5: context=12.62s ok=True
+            session_end=19.85s ok=True
+  iter  3/5: context=9.23s ok=True
+            session_end=18.56s ok=True
+  iter  4/5: context=8.84s ok=True
+            session_end=18.27s ok=True
+  iter  5/5: context=7.23s ok=True
+            session_end=19.00s ok=True
+
+hook          |   n |    p50 |    p95 |    max | budget | over_budget
+--------------------------------------------------------------------------
+context       |   5 |   9.23 |  13.26 |  13.42 |   15.0 | 0 <-- ok
+session_end   |   5 |  19.00 |  27.40 |  29.29 |   30.0 | 0 <-- ok
+
+Project-scoping isolation check …
+No Anthropic token found. Checked: MEM0_ANTHROPIC_TOKEN env var, /Users/jmaver/.claude/.credentials.json, ANTHROPIC_API_KEY env var. Anthropic LLM features will be disabled.
+  OK: 3-way scoping isolation holds for project + global
+
+==========================================================
+  dedup_and_entity
+==========================================================
+WARNING mem0_mcp_selfhosted.auth | No Anthropic token found. Checked: MEM0_ANTHROPIC_TOKEN env var, /Users/jmaver/.claude/.credentials.json, ANTHROPIC_API_KEY env var. Anthropic LLM features will be disabled.
+
+Dedup pairs (threshold 0.88) under bench-dedup-1778000664/<pid> …
+  D01 (dup): caught (TP)
+  D02 (dup): caught (TP)
+  D03 (dup): caught (TP)
+  D04 (dup): caught (TP)
+  D05 (dup): MISSED (FN)
+  D06 (dup): caught (TP)
+  D07 (dup): caught (TP)
+  D08 (dup): MISSED (FN)
+  X01 (distinct): kept (TN)
+  X02 (distinct): kept (TN)
+  X03 (distinct): kept (TN)
+  X04 (distinct): kept (TN)
+  X05 (distinct): kept (TN)
+  X06 (distinct): kept (TN)
+  X07 (distinct): kept (TN)
+  X08 (distinct): kept (TN)
+
+Confusion matrix (n=16, skipped=0):
+  TP (caught dup)        :   6
+  FN (missed dup)        :   2
+  FP (deleted distinct)  :   0
+  TN (kept distinct)     :   8
+  precision=1.000  recall=0.750  accuracy=0.875
+
+Entity-link timing (with spaCy) × 10 under bench-entity-on-1778000694 …
+Entity-link timing (spaCy patched out) × 10 under bench-entity-off-1778000704 …
+
+arm            |   n |    mean |     p50 |     p95
+----------------------------------------------------
+with spaCy     |  10 |  0.418s |  0.322s |  0.942s
+no spaCy       |  10 |  0.421s |  0.400s |  0.689s
+
+Mean Δ = -2.3 ms (-0.6%) — entity-link overhead per add

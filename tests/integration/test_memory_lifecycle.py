@@ -30,17 +30,17 @@ class TestMemoryLifecycle:
             user_id=test_user_id,
         )
 
+        # v3: entity IDs go inside filters dict; user_id= as a top-level kwarg
+        # is silently swallowed by **kwargs and the search becomes unscoped.
         results = memory_instance.search(
             query="Python packaging tool preference",
-            user_id=test_user_id,
+            filters={"user_id": test_user_id},
         )
 
         assert "results" in results
         assert len(results["results"]) >= 1
         # At least one result should reference the distinctive fact
-        memories_text = " ".join(
-            r.get("memory", "") for r in results["results"]
-        ).lower()
+        memories_text = " ".join(r.get("memory", "") for r in results["results"]).lower()
         assert "hatch" in memories_text or "python" in memories_text
 
     def test_get_memory_by_id(self, memory_instance, test_user_id):
@@ -64,7 +64,8 @@ class TestMemoryLifecycle:
         )
         memory_id = add_result["results"][0]["id"]
 
-        all_result = memory_instance.get_all(user_id=test_user_id)
+        # v3: get_all takes filters dict, not top-level user_id kwarg.
+        all_result = memory_instance.get_all(filters={"user_id": test_user_id})
 
         assert "results" in all_result
         ids = [r["id"] for r in all_result["results"]]
@@ -76,23 +77,19 @@ class TestMemoryLifecycle:
             [{"role": "user", "content": "My preferred code editor is Visual Studio Code and I use it daily for Python development"}],
             user_id=test_user_id,
         )
-        assert len(add_result.get("results", [])) >= 1, (
-            f"LLM did not extract any facts from the initial content: {add_result}"
-        )
+        assert len(add_result.get("results", [])) >= 1, f"LLM did not extract any facts from the initial content: {add_result}"
         memory_id = add_result["results"][0]["id"]
 
         memory_instance.update(memory_id, data="I switched from VS Code to Neovim as my primary editor for all development work")
 
         results = memory_instance.search(
             query="text editor preference",
-            user_id=test_user_id,
+            filters={"user_id": test_user_id},
         )
 
         assert "results" in results
         assert len(results["results"]) >= 1
-        memories_text = " ".join(
-            r.get("memory", "") for r in results["results"]
-        ).lower()
+        memories_text = " ".join(r.get("memory", "") for r in results["results"]).lower()
         assert "neovim" in memories_text
 
     def test_delete_removes_memory(self, memory_instance, test_user_id):

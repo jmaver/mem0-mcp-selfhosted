@@ -4,19 +4,23 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mem0-mcp-selfhosted"
-version = "0.3.2"
+version = "0.4.0"
 description = "Self-hosted mem0 MCP server for Claude Code"
 license = "MIT"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 authors = [
     { name = "elvismdev" },
 ]
 dependencies = [
     "mcp[cli]>=1.23.0",
-    "mem0ai[graph,llms]>=1.0.3",
+    "mem0ai[llms,nlp]>=2.0.1",
     "anthropic>=0.77.0",
-    "neo4j>=5.23.1",
+    "fastembed>=0.3.1",
     "python-dotenv>=1.2.1",
+    # spaCy English model required for mem0 v3 entity linking. Pinned as a
+    # wheel URL so `uv sync` installs it deterministically — otherwise
+    # `python -m spacy download` is needed as a separate post-install step.
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
 ]
 
 [project.scripts]
@@ -28,16 +32,39 @@ mem0-install-hooks = "mem0_mcp_selfhosted.hooks:install_main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/mem0_mcp_selfhosted"]
 
+[tool.hatch.metadata]
+# Required so the en_core_web_sm wheel URL in [project.dependencies] is accepted.
+allow-direct-references = true
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "ruff>=0.6.0",
 ]
 
 [tool.pytest.ini_options]
 markers = [
-    "integration: tests that require live infrastructure (Qdrant, Ollama, Anthropic, Neo4j)",
+    "integration: tests that require live infrastructure (Qdrant, Ollama, Anthropic)",
     "contract: tests that validate mem0ai internal API stability",
+]
+
+[tool.ruff]
+# Existing code intentionally keeps each FastMCP `Annotated[type, Field(...)]`
+# parameter on a single line for readability; ruff's default 88 would explode
+# every tool signature. 200 matches the natural width of those declarations
+# without enabling truly unreadable lines elsewhere.
+line-length = 200
+
+[tool.ruff.lint.per-file-ignores]
+# `add_memory`, `search_memories`, etc. are @mcp.tool()-decorated closures
+# inside `_register_tools`; they look unused to ruff/pyright but are
+# registered as side effects. Same for the `memory_assistant` MCP prompt.
+"src/mem0_mcp_selfhosted/server.py" = ["F811"]
+
+[tool.pyright]
+exclude = [
+    ".venv",
 ]
 
 [tool.semantic_release]

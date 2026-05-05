@@ -71,6 +71,25 @@ def _sanitize_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
     return sanitized
 
 
+# gpt-5.x cloud models (gpt-5.4-nano, gpt-5.4-mini, etc.) reject the
+# legacy ``max_tokens`` parameter and require ``max_completion_tokens``.
+# mem0's upstream base class only filters params for o1/o3 reasoning
+# models, not for gpt-5.x — so we patch the gap here.
+_GPT5_REJECTS_MAX_TOKENS_PREFIXES = ("gpt-5", "chatgpt-5")
+
+
+def _model_rejects_max_tokens(model: Any) -> bool:
+    """Return True if the OpenAI cloud model rejects the ``max_tokens`` param.
+
+    BaseLlmConfig types ``model`` loosely (str | None | dict); only str
+    values have a meaningful prefix.
+    """
+    if not isinstance(model, str):
+        return False
+    base = model.lower().rsplit("/", 1)[-1]
+    return base.startswith(_GPT5_REJECTS_MAX_TOKENS_PREFIXES)
+
+
 class OpenAICompatLLM(OpenAILLM):
     """Drop-in replacement for OpenAILLM that strips json_object response_format
     and cleans up response artifacts from local model servers.
@@ -78,6 +97,18 @@ class OpenAICompatLLM(OpenAILLM):
     Registered as the "openai" provider so it transparently replaces the
     built-in when MEM0_LLM_PROVIDER=openai is used with a local server.
     """
+
+    def _get_common_params(self, **kwargs: Any) -> dict[str, Any]:
+        """Filter ``max_tokens`` for OpenAI cloud models that reject it.
+
+        gpt-5.x and chatgpt-5.x require ``max_completion_tokens`` instead;
+        rather than pick the right name (which varies by API version), we
+        drop ``max_tokens`` entirely and let the server use its default.
+        """
+        params = super()._get_common_params(**kwargs)
+        if _model_rejects_max_tokens(getattr(self.config, "model", None)):
+            params.pop("max_tokens", None)
+        return params
 
     def generate_response(
         self,

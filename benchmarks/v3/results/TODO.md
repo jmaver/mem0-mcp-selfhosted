@@ -6,13 +6,6 @@ expanded corpora to see if the ceiling-saturation problem is gone.
 
 ## Still open
 
-### Re-run benches with expanded corpora
-Corpus expansion landed (100 facts / 30 queries / 30 extraction cases) but
-the bench has not been re-run against it. Until that runs, we don't know
-whether the hybrid-vs-semantic gap is now detectable, or whether
-`anthropic-api` extraction F1 falls below 1.0 on the harder cases. The run
-itself is mechanical — `benchmarks/bench_all.sh` is the wrapper.
-
 ### Sub-checkpoint `_get_memory()` for tighter init breakdown
 The session_end profile localized 4–5 s to `memory_init` but couldn't
 isolate which sub-phase (mem0 import / spaCy load / Qdrant init / first
@@ -21,6 +14,11 @@ in `hooks.py` if init cost ever needs targeted optimization. Low priority
 while `mem_add` dominates at 13 s mean.
 
 ## What landed in this session
+
+- ✅ Re-run benches with expanded corpora — 30-case extraction corpus + 30-query
+  / 100-fact retrieval corpus. Ceiling saturation confirmed broken; all legs now
+  sub-1.0 F1; hard-case tier (FE21–FE30) shows 0.694–0.778 range. See
+  `2026-05-05-bench-all-30case.md`.
 
 - ✅ TODO #1 — Six-way provider battle re-run with P1 fix in place. Result:
   identical F1 numbers to the 2026-05-04 run; the schema bug existed but

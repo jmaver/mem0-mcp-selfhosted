@@ -49,17 +49,16 @@ _USER_PING_PHRASES = frozenset({
     "sure", "got it", "cool", "nice", "great", "ok thanks", "thank you",
 })
 
-# Phrases that flag an assistant message as transient narration — not worth
-# extracting from. Only applied when the message is also short (< 200 chars);
-# longer narration usually has durable content past the prefix.
+# Phrases that flag an assistant message as transient tool-call narration.
+# Only applied when the message is also short (< 200 chars). Excludes
+# ambiguous prefixes ("i'll", "i will", "let's") that frequently introduce
+# durable decisions ("I'll use PostgreSQL 17", "Let's switch to Redis"); the
+# narrowed list is reliably narration ("let me check", "checking …").
 _NOISE_PREFIXES = (
     "let me ",
-    "i'll ",
-    "i will ",
     "checking ",
     "looking ",
     "running ",
-    "let's ",
 )
 
 

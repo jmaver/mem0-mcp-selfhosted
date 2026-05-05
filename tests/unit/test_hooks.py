@@ -366,10 +366,21 @@ class TestIsNoise:
         assert hooks._is_noise("assistant", "yes") is True
 
     def test_assistant_tool_narration_is_noise(self):
-        """Short assistant messages starting with narration prefixes are dropped."""
+        """Short assistant messages starting with reliable-narration prefixes are dropped."""
         assert hooks._is_noise("assistant", "Let me check the file structure first.") is True
         assert hooks._is_noise("assistant", "Running the test suite now to verify.") is True
-        assert hooks._is_noise("assistant", "I'll look at the auth module quickly.") is True
+        assert hooks._is_noise("assistant", "Looking at the auth module quickly.") is True
+
+    def test_assistant_decision_with_ambiguous_prefix_kept(self):
+        """Short assistant decisions starting with i'll/i will/let's must NOT be filtered.
+
+        Regression for codex review: 'I'll use PostgreSQL 17' and 'Let's switch to Redis'
+        are durable decisions, not narration; they were being dropped under the prior
+        prefix list.
+        """
+        assert hooks._is_noise("assistant", "I'll use PostgreSQL 17 for this project.") is False
+        assert hooks._is_noise("assistant", "Let's switch to Redis for the cache layer.") is False
+        assert hooks._is_noise("assistant", "I will refactor auth.py to use OAuth.") is False
 
     def test_long_assistant_narration_kept(self):
         """A 200+ char assistant message is durable enough to keep, even if it starts with narration."""

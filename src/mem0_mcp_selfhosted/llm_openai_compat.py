@@ -99,15 +99,18 @@ class OpenAICompatLLM(OpenAILLM):
     """
 
     def _get_common_params(self, **kwargs: Any) -> dict[str, Any]:
-        """Filter ``max_tokens`` for OpenAI cloud models that reject it.
+        """Translate ``max_tokens`` → ``max_completion_tokens`` for gpt-5.x.
 
-        gpt-5.x and chatgpt-5.x require ``max_completion_tokens`` instead;
-        rather than pick the right name (which varies by API version), we
-        drop ``max_tokens`` entirely and let the server use its default.
+        gpt-5.x / chatgpt-5.x reject ``max_tokens`` and require the
+        ``max_completion_tokens`` spelling. Translate rather than drop so
+        ``MEM0_LLM_MAX_TOKENS`` stays effective and long extractions don't
+        silently truncate at the server default.
         """
         params = super()._get_common_params(**kwargs)
         if _model_rejects_max_tokens(getattr(self.config, "model", None)):
-            params.pop("max_tokens", None)
+            max_tokens = params.pop("max_tokens", None)
+            if max_tokens is not None:
+                params["max_completion_tokens"] = max_tokens
         return params
 
     def generate_response(

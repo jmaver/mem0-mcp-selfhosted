@@ -13,7 +13,7 @@ authors = [
 ]
 dependencies = [
     "mcp[cli]>=1.23.0",
-    "mem0ai[llms,nlp]>=2.0.1",
+    "mem0ai[llms,nlp]>=2.0.2",
     "anthropic>=0.77.0",
     "fastembed>=0.3.1",
     "python-dotenv>=1.2.1",
